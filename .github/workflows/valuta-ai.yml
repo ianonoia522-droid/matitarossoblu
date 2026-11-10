@@ -2,7 +2,8 @@ name: Valutazione del rilevatore di testi generati
 
 # Misura il rilevatore (js/engine.js, analyzeAI) su testi scritti da persone prima di novembre 2022 e su temi
 # generati da modelli aperti, e pubblica il rapporto nel ramo "rapporti-ai". Dei testi umani si salvano solo
-# i segnali (numeri), il titolo o il sito: il testo non viene conservato.
+# i segnali (numeri), il titolo o il sito: il testo non viene conservato. Si può rifare solo una parte
+# (umani o ai): il rapporto unisce i dati nuovi a quelli già presenti nel ramo.
 on:
   workflow_dispatch:
     inputs:
@@ -10,16 +11,21 @@ on:
         description: "Temi da generare per ogni modello"
         required: false
         default: '45'
+      parte:
+        description: "Che cosa rifare: tutto, umani o ai"
+        required: false
+        default: 'tutto'
 
 permissions:
   contents: write
 
 concurrency:
-  group: valuta-ai
+  group: valuta-ai-${{ inputs.parte || 'tutto' }}
   cancel-in-progress: true
 
 jobs:
   umani-wikipedia:
+    if: inputs.parte != 'ai'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -36,6 +42,7 @@ jobs:
           retention-days: 7
 
   umani-mc4:
+    if: inputs.parte != 'ai'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -47,7 +54,7 @@ jobs:
         run: |
           mkdir -p mc4
           base="https://huggingface.co/datasets/allenai/c4/resolve/main/multilingual"
-          for i in 00000 00001 00002 00003 00004 00005; do
+          for i in 00000 00001 00002 00003 00004 00005 00006 00007 00008 00009; do
             f="c4-it.tfrecord-$i-of-01024.json.gz"
             curl -fsSL --retry 3 -o "mc4/$f" "$base/$f" || { echo "::warning::$f non scaricato"; rm -f "mc4/$f"; }
           done
@@ -61,6 +68,7 @@ jobs:
           retention-days: 7
 
   genera:
+    if: inputs.parte != 'umani'
     runs-on: ubuntu-latest
     timeout-minutes: 175
     strategy:
@@ -136,16 +144,23 @@ jobs:
           pattern: valuta-*
           path: out
           merge-multiple: true
+      # dati già pubblicati più quelli nuovi di questa corsa (a parità di nome valgono i nuovi)
       - name: Rapporto
         run: |
-          ls -la out
-          node tools/valuta/rapporto.js out > valutazione-ai.md
+          mkdir -p tutti
+          if git ls-remote --exit-code --heads origin rapporti-ai > /dev/null; then
+            git fetch -q --depth 1 origin +refs/heads/rapporti-ai:refs/remotes/origin/rapporti-ai
+            git archive refs/remotes/origin/rapporti-ai dati | tar -x -C tutti --strip-components=1 || true
+          fi
+          cp out/*.jsonl tutti/ 2>/dev/null || true
+          ls -la tutti
+          node tools/valuta/rapporto.js tutti > valutazione-ai.md
           cat valutazione-ai.md
       - name: Pubblica nel ramo "rapporti-ai"
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p /tmp/rep/dati && cp valutazione-ai.md /tmp/rep/ && cp out/*.jsonl /tmp/rep/dati/
+          mkdir -p /tmp/rep/dati && cp valutazione-ai.md /tmp/rep/ && cp tutti/*.jsonl /tmp/rep/dati/
           cd /tmp/rep
           git init -q -b rapporti-ai
           git config user.name "github-actions[bot]"

@@ -57,17 +57,20 @@ async function wikipedia() {
       for (const pg of info.query.pages) {
         if (out.length >= n || !pg.length || pg.length < 6000) continue;
         provate++;
-        const rv = await api({ action: 'query', prop: 'revisions', titles: pg.title, rvlimit: 1, rvstart: '2022-10-31T00:00:00Z', rvdir: 'older', rvprop: 'ids|timestamp' }); await sleep(500);
-        const rev = rv.query.pages[0] && rv.query.pages[0].revisions && rv.query.pages[0].revisions[0];
-        if (!rev) continue;   // voce creata dopo
-        const p = await api({ action: 'parse', oldid: rev.revid, prop: 'text', disablelimitreport: 1, disableeditsection: 1 }); await sleep(500);
-        const { document } = parseHTML('<!doctype html><html><body>' + p.parse.text + '</body></html>');
-        const par = Array.from(document.querySelectorAll('.mw-parser-output > p'))
-          .map(e => e.textContent.replace(/\[(?:\d+|[a-z]|N \d+|nota \d+|senza fonte|citazione necessaria|chiarimenti necessari)\]/gi, '').replace(/\s+/g, ' ').trim())
-          .filter(t => conta(t) >= 15);
-        const t = taglia(par, 250 + Math.floor(rnd() * 650));
-        if (t.parole < 200) continue;
-        out.push(Object.assign({ fonte: 'wikipedia', titolo: pg.title, revid: rev.revid, data: rev.timestamp.slice(0, 10) }, segnali(t.testo)));
+        try {
+          const rv = await api({ action: 'query', prop: 'revisions', titles: pg.title, rvlimit: 1, rvstart: '2022-10-31T00:00:00Z', rvdir: 'older', rvprop: 'ids|timestamp' }); await sleep(500);
+          const rev = rv.query && rv.query.pages[0] && rv.query.pages[0].revisions && rv.query.pages[0].revisions[0];
+          if (!rev) continue;   // voce creata dopo
+          const p = await api({ action: 'parse', oldid: rev.revid, prop: 'text', disablelimitreport: 1, disableeditsection: 1 }); await sleep(500);
+          if (!p.parse || typeof p.parse.text !== 'string') continue;   // versione nascosta o cancellata
+          const { document } = parseHTML('<!doctype html><html><body>' + p.parse.text + '</body></html>');
+          const par = Array.from(document.querySelectorAll('.mw-parser-output > p'))
+            .map(e => e.textContent.replace(/\[(?:\d+|[a-z]|N \d+|nota \d+|senza fonte|citazione necessaria|chiarimenti necessari)\]/gi, '').replace(/\s+/g, ' ').trim())
+            .filter(t => conta(t) >= 15);
+          const t = taglia(par, 250 + Math.floor(rnd() * 650));
+          if (t.parole < 200) continue;
+          out.push(Object.assign({ fonte: 'wikipedia', titolo: pg.title, revid: rev.revid, data: rev.timestamp.slice(0, 10) }, segnali(t.testo)));
+        } catch (e) { log('salto', pg.title, ':', e.message); continue; }
         if (out.length % 10 === 0) log('Wikipedia:', out.length, 'testi su', provate, 'voci lunghe provate');
       }
     }
