@@ -1,8 +1,9 @@
-// Scrittura dei file dell'indice di impronte (Node). Usato dal costruttore e dai test.
+// Scrittura dei file dell'indice di impronte (Node), formato 2. Usato dal costruttore e dai test.
 //   meta.json                descrizione dell'indice
-//   dir.bin                  numero di voci per secchio, Uint16 little-endian
-//   fp-NN.bin                voci ordinate per secchio e chiave: chiave Uint32 LE + documento a 24 bit LE (7 byte)
+//   fp/XXXX.bin              un file per gruppo (i primi `bits` bit dell'hash): voci ordinate per chiave,
+//                            chiave Uint32 LE + documento a 24 bit LE (7 byte); file vuoti compresi
 //   documenti/d-S.json       [[url, titolo], ...] per i documenti S*docShard ... S*docShard+docShard-1
+// Il browser scarica interi solo i file dei gruppi che gli servono: niente richieste parziali.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -26,71 +27,55 @@ class Raccolta {
   }
 }
 
-function scegliBits(n) { let b = 8; while (b < 20 && n / (1 << b) > 512) b++; return b; }
+// numero di bit per avere file di circa `target` byte (da 2^2 a 2^16 file)
+function scegliBits(n, target) { let b = 2; while (b < 16 && (n * 7) / (1 << b) > (target || 6144)) b++; return b; }
 
-// opts: { k, w, dfMax, docShard, maxFileBytes, archivio, siti }
+// opts: { k, w, dfMax, docShard, bits, archivio, archivioData, archivioDal, siti, versione }
 function scriviIndice(out, documenti, R, opts) {
   opts = opts || {};
-  const dfMax = opts.dfMax || 8, docShard = opts.docShard || 1000, maxFile = opts.maxFileBytes || 40 * 1024 * 1024;
-  const n = R.n, bits = opts.bits || scegliBits(n), nb = 1 << bits;
-  // ordinamento per secchio (conteggio) e poi per chiave dentro il secchio
-  const bucket = new Uint32Array(n), key = new Uint32Array(n), cnt = new Uint32Array(nb + 1);
-  for (let i = 0; i < n; i++) { const b = MRIndex.bucketOf(R.A[i], bits); bucket[i] = b; key[i] = MRIndex.keyOf(R.A[i], R.B[i], bits); cnt[b + 1]++; }
-  for (let b = 0; b < nb; b++) cnt[b + 1] += cnt[b];
-  const order = new Uint32Array(n), fill = cnt.slice(0, nb);
-  for (let i = 0; i < n; i++) order[fill[bucket[i]]++] = i;
-  const kept = new Uint32Array(nb);
-  let total = 0, dropped = 0, droppedKeys = 0;
-  const outIdx = new Uint32Array(n);
-  for (let b = 0; b < nb; b++) {
-    const s = cnt[b], e = cnt[b + 1];
-    if (e === s) continue;
-    const slice = Array.from(order.subarray(s, e)).sort((x, y) => key[x] - key[y] || R.D[x] - R.D[y]);
+  const dfMax = opts.dfMax || 8, docShard = opts.docShard || 1000;
+  const n = R.n, bits = opts.bits || scegliBits(n), nf = 1 << bits;
+  if (documenti.length > 0xffffff) throw new Error('troppi documenti per 24 bit: ' + documenti.length);
+  // ordinamento per file (conteggio) e poi per chiave dentro il file
+  const file = new Uint32Array(n), key = new Uint32Array(n), cnt = new Uint32Array(nf + 1);
+  for (let i = 0; i < n; i++) { const f = MRIndex.bucketOf(R.A[i], R.B[i], bits); file[i] = f; key[i] = MRIndex.keyOf(R.A[i], R.B[i], bits); cnt[f + 1]++; }
+  for (let f = 0; f < nf; f++) cnt[f + 1] += cnt[f];
+  const order = new Uint32Array(n), fill = cnt.slice(0, nf);
+  for (let i = 0; i < n; i++) order[fill[file[i]]++] = i;
+  fs.rmSync(path.join(out, 'fp'), { recursive: true, force: true });
+  fs.rmSync(path.join(out, 'documenti'), { recursive: true, force: true });
+  fs.mkdirSync(path.join(out, 'fp'), { recursive: true });
+  fs.mkdirSync(path.join(out, 'documenti'), { recursive: true });
+  let total = 0, dropped = 0, droppedKeys = 0, maxFile = 0;
+  for (let f = 0; f < nf; f++) {
+    const slice = Array.from(order.subarray(cnt[f], cnt[f + 1])).sort((x, y) => key[x] - key[y] || R.D[x] - R.D[y]);
+    const keep = [];
     for (let i = 0; i < slice.length;) {
       let j = i; const kk = key[slice[i]];
       while (j < slice.length && key[slice[j]] === kk) j++;
-      const docsN = new Set(slice.slice(i, j).map(x => R.D[x])).size;
-      if (docsN > dfMax) { dropped += j - i; droppedKeys++; }
-      else { const seen = new Set(); for (let t = i; t < j; t++) { const d = R.D[slice[t]]; if (!seen.has(d)) { seen.add(d); outIdx[total++] = slice[t]; kept[b]++; } } }
+      const docs = new Set(); for (let t = i; t < j; t++) docs.add(R.D[slice[t]]);
+      // impronte presenti in troppe pagine: menu, piè di pagina, formule ricorrenti
+      if (docs.size > dfMax) { dropped += j - i; droppedKeys++; }
+      else for (const d of Array.from(docs).sort((x, y) => x - y)) keep.push([kk, d]);
       i = j;
     }
-  }
-  let maxBucket = 0;
-  for (let b = 0; b < nb; b++) maxBucket = Math.max(maxBucket, kept[b]);
-  if (maxBucket > 65535) throw new Error('secchio troppo pieno: ' + maxBucket);
-  fs.mkdirSync(path.join(out, 'documenti'), { recursive: true });
-  for (const f of fs.readdirSync(out)) if (/^fp-\d+\.bin$/.test(f)) fs.unlinkSync(path.join(out, f));
-  const dir = Buffer.alloc(nb * 2);
-  for (let b = 0; b < nb; b++) dir.writeUInt16LE(kept[b], b * 2);
-  fs.writeFileSync(path.join(out, 'dir.bin'), dir);
-  // file interi per secchio, ciascuno sotto maxFile byte
-  const files = [];
-  let pos = 0, b = 0;
-  while (b < nb) {
-    const primo = pos; let voci = 0;
-    while (b < nb && (voci === 0 || (voci + kept[b]) * 7 <= maxFile)) { voci += kept[b]; b++; }
-    const buf = Buffer.alloc(voci * 7);
-    for (let t = 0; t < voci; t++) {
-      const i = outIdx[primo + t];
-      buf.writeUInt32LE(key[i], t * 7);
-      const d = R.D[i]; buf[t * 7 + 4] = d & 255; buf[t * 7 + 5] = (d >>> 8) & 255; buf[t * 7 + 6] = (d >>> 16) & 255;
-    }
-    const nome = 'fp-' + String(files.length).padStart(2, '0') + '.bin';
-    fs.writeFileSync(path.join(out, nome), buf);
-    files.push({ nome, primo, voci });
-    pos += voci;
+    const buf = Buffer.alloc(keep.length * 7);
+    keep.forEach(([kk, d], t) => { buf.writeUInt32LE(kk, t * 7); buf[t * 7 + 4] = d & 255; buf[t * 7 + 5] = (d >>> 8) & 255; buf[t * 7 + 6] = (d >>> 16) & 255; });
+    fs.writeFileSync(path.join(out, MRIndex.fileName(f, bits)), buf);
+    total += keep.length; maxFile = Math.max(maxFile, buf.length);
   }
   for (let s = 0; s * docShard < documenti.length; s++) {
     fs.writeFileSync(path.join(out, 'documenti', 'd-' + s + '.json'), JSON.stringify(documenti.slice(s * docShard, (s + 1) * docShard).map(d => [d.url, d.title])));
   }
   const versione = opts.versione || new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
   const meta = {
-    formato: 1, versione, k: opts.k || MRIndex.K, w: opts.w || MRIndex.W, bits, dir: 'dir.bin', files, docShard,
-    documenti: documenti.length, voci: total, dfMax, scartate: dropped, archivio: opts.archivio || '', archivioData: opts.archivioData || '', archivioDal: opts.archivioDal || '', costruito: new Date().toISOString(),
+    formato: 2, versione, k: opts.k || MRIndex.K, w: opts.w || MRIndex.W, bits, docShard,
+    documenti: documenti.length, voci: total, dfMax, scartate: dropped,
+    archivio: opts.archivio || '', archivioData: opts.archivioData || '', archivioDal: opts.archivioDal || '', costruito: new Date().toISOString(),
     siti: opts.siti || [],
   };
   fs.writeFileSync(path.join(out, 'meta.json'), JSON.stringify(meta, null, 1));
-  return Object.assign({ maxBucket, droppedKeys }, meta);
+  return Object.assign({ maxFile, droppedKeys, files: nf }, meta);
 }
 
 module.exports = { Raccolta, scriviIndice, scegliBits };
