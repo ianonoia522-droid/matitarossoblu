@@ -1,0 +1,41 @@
+name: Verifica copertura Common Crawl
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tools/copertura.py
+      - .github/workflows/copertura.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: copertura
+  cancel-in-progress: true
+
+jobs:
+  copertura:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verifica
+        run: python tools/copertura.py | tee copertura.md
+      - name: Pubblica il rapporto nel ramo "rapporti"
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/rep && cp copertura.md /tmp/rep/ 2>/dev/null || echo "nessun rapporto" > /tmp/rep/copertura.md
+          cd /tmp/rep
+          git init -q -b rapporti
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add copertura.md
+          git commit -q -m "Rapporto di copertura ${GITHUB_RUN_ID}"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" rapporti
