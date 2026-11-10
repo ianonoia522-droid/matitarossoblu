@@ -564,9 +564,11 @@ var MR = (function () {
   const sdev = (a, m) => (a.length ? Math.sqrt(a.reduce((x, y) => x + (y - m) * (y - m), 0) / a.length) : 0);
 
   // Taratura delle fasce: l'indice grezzo viene riscalato (in modo crescente, quindi l'ordine dei testi non cambia)
-  // perché il confine di «segnali misti» (35) e quello di «molti segnali» (60) cadano dove li supera solo una piccola
-  // quota dei temi scritti da persone nei campioni di prova (tools/valuta). Con T_MID = 35 e T_HI = 60 non cambia nulla.
-  const T_MID = 35, T_HI = 60;
+  // perché il confine di «segnali misti» (35) e quello di «molti segnali» (60) cadano dove li supera al massimo il 5%
+  // e l'1% dei testi scritti da persone in ognuno dei gruppi di prova (temi, appunti e riassunti, pagine web,
+  // Wikipedia: 1.800 testi anteriori al 2022, tools/valuta). Misura di novembre 2026: con l'arrotondamento i confini
+  // cadono a 26,1 e 36,3 dell'indice grezzo.
+  const T_MID = 26.5, T_HI = 36.5;
   function taratura(v) {
     return v <= T_MID ? v * 35 / T_MID : v <= T_HI ? 35 + (v - T_MID) * 25 / (T_HI - T_MID) : 60 + (v - T_HI) * 40 / (100 - T_HI);
   }
@@ -729,7 +731,7 @@ var MR = (function () {
     return { lang, words, nSent: SX.length, nProse: prose.length, mean, base, h, hRate, human, index, indexRaw, indexNoHuman, band, qty, signals: S, residue, dialogue, sentences: SX, mkPts, md, inv, strongRes };
   }
 
-  return { foldWord, tokenize, countWords, tokAt, stem, isContent, splitSentences, prepText, analyzePlagiarism, fingerprints, wikiQueries, detectLang, lcsMask, analyzeAI };
+  return { foldWord, tokenize, countWords, tokAt, stem, isContent, splitSentences, prepText, analyzePlagiarism, fingerprints, wikiQueries, detectLang, lcsMask, analyzeAI, taratura };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = MR;

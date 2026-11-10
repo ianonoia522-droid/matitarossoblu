@@ -18,6 +18,11 @@ const esterni = args.esterni ? leggi(args.esterni) : [];
 
 const gruppoUmano = r => (r.fonte === 'mc4-studio' || r.fonte === 'mc4-web' ? (STUDIO.test(r.host || '') ? 'mc4-studio' : 'mc4-web') : r.fonte);
 const valido = r => r && r.indice !== null && r.indice !== undefined && r.lingua === 'it';
+// indice attuale: grezzo (stessa scala per tutti, anche se i dati vengono da versioni diverse della taratura) e
+// tarato con le fasce di oggi di engine.js
+const MR = require('../../js/engine.js');
+const grezzoDi = r => (r.indiceGrezzo !== null && r.indiceGrezzo !== undefined ? r.indiceGrezzo : r.indice);
+const taratoDi = r => Math.round(MR.taratura(grezzoDi(r)));
 const umani = righe.filter(r => r.fonte !== 'ai').map(r => Object.assign({ y: 0, gruppo: gruppoUmano(r) }, r)).filter(valido);
 const ai = righe.filter(r => r.fonte === 'ai' && r.pulito).map(r => Object.assign({ y: 1, gruppo: r.modello, stile: r.stile }, r.pulito)).filter(valido);
 const est = esterni.filter(r => r.fonte === 'ai' && r.pulito).map(r => Object.assign({ y: 1, gruppo: r.modello, stile: r.stile }, r.pulito)).filter(valido);
@@ -135,18 +140,18 @@ Lr.push('| modello nuovo | ' + num(auc(zA.map(x => x.z), zU.map(x => x.z))) + ' 
   let u5 = 0, a5 = 0, u1 = 0, a1 = 0;
   for (let k = 0; k < K; k++) {
     const train = umani.filter(r => r.fold !== k), w = pesi(train);
-    const t5 = soglia(train.map(r => r.indice), w, 0.05), t1 = soglia(train.map(r => r.indice), w, 0.01);
-    for (const x of interni.filter(x => x.r.fold === k)) { const v = x.r.indice; if (x.r.y) { a5 += v > t5; a1 += v > t1; } else { u5 += v > t5; u1 += v > t1; } }
+    const t5 = soglia(train.map(grezzoDi), w, 0.05), t1 = soglia(train.map(grezzoDi), w, 0.01);
+    for (const x of interni.filter(x => x.r.fold === k)) { const v = grezzoDi(x.r); if (x.r.y) { a5 += v > t5; a1 += v > t1; } else { u5 += v > t5; u1 += v > t1; } }
   }
-  Lr.push('| indice attuale | ' + num(auc(zA.map(x => x.r.indice), zU.map(x => x.r.indice))) + ' | ' + pct(u5, zU.length) + ' | ' + pct(a5, zA.length) + ' | ' + pct(u1, zU.length) + ' | ' + pct(a1, zA.length) + ' |');
-  Lr.push('| indice attuale, soglie di oggi (35 e 60) | | ' + pct(zU.filter(x => x.r.indice >= 35).length, zU.length) + ' | ' + pct(zA.filter(x => x.r.indice >= 35).length, zA.length) + ' | ' + pct(zU.filter(x => x.r.indice >= 60).length, zU.length) + ' | ' + pct(zA.filter(x => x.r.indice >= 60).length, zA.length) + ' |');
+  Lr.push('| indice attuale | ' + num(auc(zA.map(x => grezzoDi(x.r)), zU.map(x => grezzoDi(x.r)))) + ' | ' + pct(u5, zU.length) + ' | ' + pct(a5, zA.length) + ' | ' + pct(u1, zU.length) + ' | ' + pct(a1, zA.length) + ' |');
+  Lr.push('| indice attuale, fasce di engine.js (35 e 60) | | ' + pct(zU.filter(x => taratoDi(x.r) >= 35).length, zU.length) + ' | ' + pct(zA.filter(x => taratoDi(x.r) >= 35).length, zA.length) + ' | ' + pct(zU.filter(x => taratoDi(x.r) >= 60).length, zU.length) + ' | ' + pct(zA.filter(x => taratoDi(x.r) >= 60).length, zA.length) + ' |');
 }
 // AUC giro per giro (modello tenuto fuori contro il quarto di umani tenuto fuori nello stesso giro), poi la media
 {
   const nuovo = [], att = [];
   for (let k = 0; k < K; k++) {
     const u = interni.filter(x => x.r.fold === k && x.r.y === 0), a = interni.filter(x => x.r.fold === k && x.r.y === 1);
-    nuovo.push(auc(a.map(x => x.z), u.map(x => x.z))); att.push(auc(a.map(x => x.r.indice), u.map(x => x.r.indice)));
+    nuovo.push(auc(a.map(x => x.z), u.map(x => x.z))); att.push(auc(a.map(x => grezzoDi(x.r)), u.map(x => grezzoDi(x.r))));
   }
   const m = v => v.reduce((x, y) => x + y, 0) / v.length;
   Lr.push('', 'AUC giro per giro (' + modelli.join(', ') + '): modello nuovo ' + nuovo.map(v => num(v)).join(' · ') + ' (media ' + num(m(nuovo)) + '); indice attuale ' + att.map(v => num(v)).join(' · ') + ' (media ' + num(m(att)) + ').');

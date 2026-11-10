@@ -15,9 +15,13 @@ for (const f of files) for (const ln of fs.readFileSync(f, 'utf8').split('\n')) 
 // pagine web: il gruppo si decide dal sito con l'elenco chiuso di umani.js (le prime raccolte usavano un filtro più largo)
 const { STUDIO } = require('./umani.js');
 const gruppoUmano = r => (r.fonte === 'mc4-studio' || r.fonte === 'mc4-web' ? (STUDIO.test(r.host || '') ? 'mc4-studio' : 'mc4-web') : r.fonte);
-const umani = righe.filter(r => r.fonte !== 'ai').map(r => Object.assign({}, r, { gruppo: gruppoUmano(r) }));
-const ai = righe.filter(r => r.fonte === 'ai').map(r => Object.assign({ gruppo: r.modello, stile: r.stile }, r.pulito));
-const aiGrezzi = righe.filter(r => r.fonte === 'ai').map(r => Object.assign({ gruppo: r.modello, stile: r.stile }, r.grezzo));
+// indice e fascia ricalcolati dall'indice grezzo con la taratura attuale di engine.js (i testi umani non sono
+// salvati, ma il loro indice grezzo sì: cambiare la taratura non richiede di rifare il campione)
+const MR = require('../../js/engine.js');
+const tara = s => (s && s.indiceGrezzo !== null && s.indiceGrezzo !== undefined ? Object.assign({}, s, { indice: Math.round(MR.taratura(s.indiceGrezzo)) }) : s);
+const umani = righe.filter(r => r.fonte !== 'ai').map(r => Object.assign(tara(r), { gruppo: gruppoUmano(r) }));
+const ai = righe.filter(r => r.fonte === 'ai').map(r => Object.assign({ gruppo: r.modello, stile: r.stile }, tara(r.pulito)));
+const aiGrezzi = righe.filter(r => r.fonte === 'ai').map(r => Object.assign({ gruppo: r.modello, stile: r.stile }, tara(r.grezzo)));
 
 const pct = (a, b) => (b ? (100 * a / b).toFixed(1).replace('.', ',') + '%' : '–');
 const med = a => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };

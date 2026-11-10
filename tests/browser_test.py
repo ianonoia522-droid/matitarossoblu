@@ -114,7 +114,7 @@ with sync_playwright() as pw:
         pg.on('request', on_req)
         pg.goto(url)
         expect(pg.locator('#tabSrcNum')).not_to_have_text('–', timeout=10000)
-        check(mode, 'esempio analizzato all\'apertura', pg.inner_text('#tabSrcNum').strip() == '24%' and pg.inner_text('#tabAiNum').strip() == '55', pg.inner_text('#tabSrcNum') + ' / ' + pg.inner_text('#tabAiNum'))
+        check(mode, 'esempio analizzato all\'apertura', pg.inner_text('#tabSrcNum').strip() == '24%' and pg.inner_text('#tabAiNum').strip() == '72', pg.inner_text('#tabSrcNum') + ' / ' + pg.inner_text('#tabAiNum'))
         vis = lambda sel: pg.is_visible(sel)
         check(mode, 'elementi nascosti davvero nascosti all\'apertura', not vis('#pasteBox') and not vis('#copyFb') and not vis('#pane-web') and not vis('#pane-ai') and not vis('#staleBar'), [x for x in ['#pasteBox', '#copyFb', '#pane-web', '#pane-ai', '#staleBar'] if vis(x)])
         check(mode, 'barra esempio e pulsanti visibili', vis('#exampleBar') and vis('#dlBtn') and vis('#pane-src'))

@@ -12,7 +12,7 @@ on:
         required: false
         default: '45'
       parte:
-        description: "Che cosa rifare: tutto, umani o ai"
+        description: "Che cosa rifare: tutto, umani, ai o rapporto (solo il rapporto, dai dati già pubblicati)"
         required: false
         default: 'tutto'
 
@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   umani-wikipedia:
-    if: inputs.parte != 'ai'
+    if: inputs.parte != 'ai' && inputs.parte != 'rapporto'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -44,7 +44,7 @@ jobs:
   # pagine web italiane raccolte nel 2019-2020 (mC4), lette al volo senza salvarle su disco: temi e componimenti
   # (riconosciuti dall'indirizzo) e siti di studio. Le parti 0-9 sono già nel campione pubblicato (umani-mc4.jsonl).
   umani-mc4:
-    if: inputs.parte != 'ai'
+    if: inputs.parte != 'ai' && inputs.parte != 'rapporto'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -69,7 +69,7 @@ jobs:
           retention-days: 7
 
   genera:
-    if: inputs.parte != 'umani'
+    if: inputs.parte != 'umani' && inputs.parte != 'rapporto'
     runs-on: ubuntu-latest
     timeout-minutes: 175
     strategy:
@@ -140,7 +140,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: actions/download-artifact@v4
+      - if: inputs.parte != 'rapporto'
+        uses: actions/download-artifact@v4
         with:
           pattern: valuta-*
           path: out
