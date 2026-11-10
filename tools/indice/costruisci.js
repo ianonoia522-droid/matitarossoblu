@@ -43,10 +43,9 @@ async function fetchRetry(url, init, tries) {
 async function elenca() {
   const archivio = args.archivio, dom = args.dominio, modo = args.modo || 'domain', dir = args.lavoro;
   fs.mkdirSync(dir, { recursive: true });
-  const robots = await robotsFor(dom);
   const filtro = typeof args.filtro === 'string' && args.filtro ? new RegExp(args.filtro) : null;
-  const best = new Map();
-  let lines = 0, kept = 0, blocked = 0;
+  const cand = [];
+  let lines = 0;
   const consider = (ln) => {
     if (!ln) return;
     lines++;
@@ -54,11 +53,7 @@ async function elenca() {
     const mime = r['mime-detected'] || r.mime || '';
     if (String(r.status) !== '200' || !/html/.test(mime) || !/ita/.test(r.languages || '')) return;
     if (filtro && !filtro.test(r.url)) return;
-    if (robots && !robots.isAllowed(r.url, 'CCBot')) { blocked++; return; }
-    const key = r.url.replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, '');
-    const prev = best.get(key);
-    if (!prev || r.timestamp > prev.timestamp) best.set(key, { url: r.url, filename: r.filename, offset: +r.offset, length: +r.length, timestamp: r.timestamp });
-    kept++;
+    cand.push(r);
   };
   if (typeof args.da === 'string') {
     for (const ln of fs.readFileSync(args.da, 'utf8').split('\n')) consider(ln);
@@ -78,19 +73,34 @@ async function elenca() {
       await sleep(800);
     }
   }
+  // robots.txt attuale, host per host (www.sito.it e sito.it hanno ciascuno il proprio)
+  const hosts = new Map();
+  for (const r of cand) { const hst = new URL(r.url).host; hosts.set(hst, (hosts.get(hst) || 0) + 1); }
+  const robots = new Map();
+  for (const [hst] of Array.from(hosts).sort((a, b) => b[1] - a[1]).slice(0, 40)) robots.set(hst, await robotsHost(hst));
+  const best = new Map();
+  let kept = 0, blocked = 0;
+  for (const r of cand) {
+    const rb = robots.get(new URL(r.url).host);
+    if (rb && rb.isAllowed(r.url, 'CCBot') === false) { blocked++; continue; }
+    const key = r.url.replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, '');
+    const prev = best.get(key);
+    if (!prev || r.timestamp > prev.timestamp) best.set(key, { url: r.url, filename: r.filename, offset: +r.offset, length: +r.length, timestamp: r.timestamp });
+    kept++;
+  }
   const out = path.join(dir, 'elenco-' + dom + '.jsonl');
   fs.writeFileSync(out, Array.from(best.values()).map(x => JSON.stringify(x)).join('\n') + '\n');
-  log(dom, 'righe', lines, '· in italiano', kept, '· escluse dal robots.txt attuale', blocked, '· indirizzi unici', best.size);
+  log(dom, 'righe', lines, '· HTML in italiano', cand.length, '· escluse dal robots.txt attuale', blocked, '· host', hosts.size, '· indirizzi unici', best.size);
 }
 
-async function robotsFor(dom) {
+// robots.txt di un host: null se non si riesce a leggerlo (vale la verifica fatta da Common Crawl al momento della raccolta)
+async function robotsHost(host) {
   const robotsParser = require('robots-parser');
-  for (const h of [dom.split('.').length > 2 ? dom : 'www.' + dom, dom]) {
-    try {
-      const res = await fetchRetry('https://' + h + '/robots.txt', null, 2);
-      if (res.ok) return robotsParser('https://' + h + '/robots.txt', await res.text());
-    } catch (e) { /* prova l'altro host */ }
-  }
+  try {
+    const res = await fetchRetry('https://' + host + '/robots.txt', null, 2);
+    if (res.ok) return robotsParser('https://' + host + '/robots.txt', await res.text());
+    if (res.status >= 400 && res.status < 500) return robotsParser('https://' + host + '/robots.txt', '');
+  } catch (e) { /* rete */ }
   return null;
 }
 
