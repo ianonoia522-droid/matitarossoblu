@@ -69,6 +69,21 @@ COUNT_FETCH = """(() => { const f = window.fetch; let n = 0; window.__wk = { max
     const p = f.apply(this, arguments); if (w) p.then(() => { n--; }, () => { n--; }); return p; }; })();"""
 SIMPLE_HEADERS = {'accept', 'user-agent', 'origin', 'accept-language', 'accept-encoding'}
 
+# Indice di prova: pagine inventate, costruito con lo stesso codice dell'indice vero e servito con richieste parziali
+import subprocess, shutil
+FIX = OUT / 'indice-prova'
+shutil.rmtree(FIX, ignore_errors=True)
+IDX_DOC = json.loads(subprocess.run(['node', str(SITE / 'tests' / 'fixture-indice.js'), str(FIX / 'indice')], check=True, capture_output=True, text=True).stdout)['testo']
+ix = {'log': [], 'missing': False}
+def idx_route(route):
+    req = route.request
+    rel = urllib.parse.urlparse(req.url).path.split('/indice/', 1)[1]
+    ix['log'].append({'url': req.url, 'range': req.headers.get('range')})
+    f = FIX / 'indice' / rel
+    if ix['missing'] or not f.exists():
+        return route.fulfill(status=404, body='non trovato')
+    route.fulfill(status=200, headers={'Content-Type': 'application/json' if f.suffix == '.json' else 'application/octet-stream'}, body=f.read_bytes())
+
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
 httpd = socketserver.TCPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=str(SITE)))
@@ -236,6 +251,41 @@ with sync_playwright() as pw:
         expected = [e for e in errors if e.startswith('Failed to load resource')]
         check(mode, 'wiki: nessuna violazione della CSP', not csp, ' | '.join(csp)[:300])
         check(mode, 'wiki: nessun errore di script', not [e for e in errors if e not in csp and e not in expected], ' | '.join(e for e in errors if e not in csp and e not in expected)[:300])
+
+        # ---- ricerca nell'indice dei siti di studio (indice di prova) ----
+        ctx.route('**/indice/**', idx_route)
+        ix.update(log=[], missing=False)
+        pg.reload(); expect(pg.locator('#tabSrcNum')).not_to_have_text('–', timeout=10000)
+        pg.click('#clearBtn'); pg.fill('#docText', IDX_DOC)
+        check(mode, 'indice: nessuna lettura prima del pulsante', not ix['log'], len(ix['log']))
+        pg.click('#idxBtn')
+        expect(pg.locator('#idxMsg')).to_have_text(re.compile(r'Corrispondenze|Nessuna|non|Errore|errore'), timeout=15000)
+        msg = pg.inner_text('#idxMsg')
+        if mode == 'file':
+            check(mode, 'indice: da file locale spiega che serve il sito pubblicato', 'sito pubblicato' in msg and not ix['log'], msg[:120])
+        else:
+            check(mode, 'indice: pagina copiata trovata e aggiunta alle fonti', 'Corrispondenze in 1 pagina' in msg and 'skuola.net · Rivoluzione francese: riassunto' in msg, msg[:200])
+            check(mode, 'indice: descrizione dell\'indice nel messaggio', "42 pagine di skuola.net, treccani.it, dall'archivio Common Crawl, raccolte da gennaio 2023 a ottobre 2026" in msg, msg[-170:])
+            lk = pg.locator('#srcList a.nm')
+            check(mode, 'indice: la fonte è un link alla pagina', lk.count() == 1 and lk.get_attribute('href') == 'https://www.skuola.net/storia/rivoluzione-francese-riassunto.html')
+            expect(pg.locator('#runStatus')).to_have_text(re.compile(r'completata|Errore'), timeout=15000)
+            check(mode, 'indice: analisi aggiornata con la pagina', pg.inner_text('#tabSrcNum').strip() not in ('0%', '–') and pg.locator('#plist .pitem').count() >= 1, pg.inner_text('#tabSrcNum'))
+            pg.click('#plist .pitem .phead')
+            note = pg.inner_text('#plist .cmp-note') if pg.locator('#plist .cmp-note').count() else ''
+            check(mode, 'indice: il confronto spiega che il testo della pagina non è conservato', 'non conserva il testo delle pagine' in note and pg.locator('#plist .cmp-t').count() == 1, note[:120])
+            fp_n = sum(1 for r in ix['log'] if '/fp/' in r['url'])
+            check(mode, 'indice: scaricati solo i file che servono, senza richieste parziali', 1 <= fp_n < 64 and not any(r['range'] for r in ix['log']), str(fp_n) + ' file di impronte su 64')
+            # indice assente
+            ix.update(missing=True)
+            pg.reload(); expect(pg.locator('#tabSrcNum')).not_to_have_text('–', timeout=10000)
+            pg.click('#clearBtn'); pg.fill('#docText', IDX_DOC)
+            pg.click('#idxBtn')
+            expect(pg.locator('#idxMsg')).to_have_text(re.compile(r'non è disponibile|errore|Errore|Corrispondenze'), timeout=15000)
+            check(mode, 'indice assente: messaggio chiaro', 'non è disponibile' in pg.inner_text('#idxMsg'), pg.inner_text('#idxMsg')[:100])
+            ix.update(missing=False)
+        csp = [e for e in errors if 'Content Security Policy' in e or 'Refused' in e]
+        expected = [e for e in errors if e.startswith('Failed to load resource')]
+        check(mode, 'indice: nessun errore di script né violazione della CSP', not [e for e in errors if e not in expected], ' | '.join(e for e in errors if e not in expected)[:300])
         ctx.close()
     b.close()
 httpd.shutdown()

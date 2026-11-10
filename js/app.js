@@ -50,7 +50,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     exampleBar: E('exampleBar'), clearBtn: E('clearBtn'),
     srcPanel: E('srcPanel'), srcList: E('srcList'), srcEmpty: E('srcEmpty'), srcCount: E('srcCount'), srcFile: E('srcFile'), srcMsg: E('srcMsg'),
     pasteToggle: E('pasteToggle'), pasteBox: E('pasteBox'), pasteName: E('pasteName'), pasteText: E('pasteText'), pasteAdd: E('pasteAdd'), pasteCancel: E('pasteCancel'),
-    wikiBtn: E('wikiBtn'), wikiMsg: E('wikiMsg'),
+    wikiBtn: E('wikiBtn'), wikiMsg: E('wikiMsg'), idxBtn: E('idxBtn'), idxMsg: E('idxMsg'),
     optK: E('optK'), optGap: E('optGap'), optQuotes: E('optQuotes'), optBiblio: E('optBiblio'), optPara: E('optPara'), optWiki: E('optWiki'),
     runBtn: E('runBtn'), runStatus: E('runStatus'), staleBar: E('staleBar'),
     tabs: [E('tab-src'), E('tab-web'), E('tab-ai')], panes: { src: E('pane-src'), web: E('pane-web'), ai: E('pane-ai') },
@@ -111,6 +111,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
   // nome della fonte; le voci di Wikipedia diventano un link alla voce
   function nameHTML(s, cls) {
     if (s && s.wiki) return '<a class="' + cls + '" href="' + esc(s.wiki.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(s.name) + ' · apri la voce">' + esc(s.name) + '</a>';
+    if (s && s.idx) return '<a class="' + cls + '" href="' + esc(s.idx.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(s.idx.url) + '">' + esc(s.name) + '</a>';
     return '<span class="' + cls + '" title="' + esc(s.name) + '">' + esc(s.name) + '</span>';
   }
   function renderSources() {
@@ -351,6 +352,76 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     if (added.length) { selectTab('src'); await runAnalysis(); }
   }
 
+  // ---------- ricerca nell'indice dei siti di studio (impronte; il testo non esce dal computer) ----------
+  const idxClient = window.MRIndex ? MRIndex.createIndex('indice/') : null;
+  const idx = { running: false, ctrl: null };
+  const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+  function archivioLabel(m) {
+    const mese = v => { const d = v ? new Date(v) : null; return d && !isNaN(d) ? MESI[d.getUTCMonth()] + ' ' + d.getUTCFullYear() : ''; };
+    const a = mese(m && m.archivioData), da = mese(m && m.archivioDal);
+    if (a && da && da !== a) return 'archivio Common Crawl, raccolte da ' + da + ' a ' + a;
+    return a ? 'archivio Common Crawl di ' + a : 'archivio Common Crawl' + (m && m.archivio ? ' ' + m.archivio : '');
+  }
+  function idxErrText(e) {
+    switch (e && e.kind) {
+      case 'missing': return 'L\'indice dei siti di studio non è disponibile su questo sito.';
+      case 'network': return 'Non riesco a leggere l\'indice: controlla la connessione e riprova.';
+      case 'format': return 'L\'indice ha un formato che questa versione della pagina non riconosce: ricarica la pagina.';
+      case 'http': return 'Il server ha risposto con un errore (codice ' + e.detail + ') mentre leggevo l\'indice.';
+      default: return 'Errore imprevisto durante la ricerca nell\'indice: ' + (e && e.message ? e.message : e) + '.';
+    }
+  }
+  function setIdxRunning(on) {
+    idx.running = on;
+    el.idxBtn.textContent = on ? 'Interrompi la ricerca' : 'Cerca nei siti di studio';
+    el.idxBtn.classList.toggle('stop', on);
+  }
+  async function runIdx(ev) {
+    if (idx.running) { if (idx.ctrl && !(ev && ev.detail > 1)) idx.ctrl.abort(); return; }
+    if (!idxClient) { setMsg(el.idxMsg, 'Il modulo di ricerca nell\'indice non si è caricato: controlla che il file js/impronte.js sia stato pubblicato.', true); return; }
+    if (location.protocol === 'file:') { setMsg(el.idxMsg, 'La ricerca nei siti di studio funziona dal sito pubblicato, non dalla pagina aperta come file locale.', true); return; }
+    const text = el.docText.value;
+    if (MR.countWords(text) < 20) { setMsg(el.idxMsg, 'Incolla o carica prima il testo da verificare: servono almeno 20 parole.', true); return; }
+    const opts = Object.assign({}, state.opts), doc = MR.analyzePlagiarism(text, [], opts).doc;
+    idx.ctrl = new AbortController();
+    setIdxRunning(true);
+    setMsg(el.idxMsg, 'Lettura dell\'indice…');
+    const added = [];
+    let res = null, err = null;
+    try {
+      res = await idxClient.search(doc.toks, doc.excl, {
+        signal: idx.ctrl.signal, max: 6,
+        onProgress: (i, n) => setMsg(el.idxMsg, 'Confronto delle impronte: ' + i + ' di ' + n + ' blocchi dell\'indice…'),
+      });
+      const have = new Set(state.sources.filter(s => s.idx).map(s => s.idx.url));
+      for (const d of res.docs) {
+        if (have.has(d.url)) continue;
+        const dominio = d.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
+        // il testo della fonte è fatto dei passaggi del testo verificato che coincidono con la pagina
+        const body = d.passages.map(p => doc.text.slice(doc.toks[p.ti].s, doc.toks[p.te - 1].e)).join('\n\n');
+        addSource(dominio + ' · ' + (d.title || d.url), body, { example: state.example, idx: { url: d.url, title: d.title, dominio, archivio: res.meta.archivio, archivioData: res.meta.archivioData } });
+        added.push(dominio + ' · ' + (d.title || d.url));
+      }
+    } catch (e) { err = e; }
+    setIdxRunning(false);
+    idx.ctrl = null;
+    const aborted = err && err.name === 'AbortError';
+    if (err && !aborted && !err.kind) console.error(err);
+    const m = res ? res.meta : idxClient.meta(), parts = [];
+    if (aborted) parts.push('Ricerca nell\'indice interrotta.');
+    else if (err) parts.push(idxErrText(err));
+    else if (added.length) parts.push((added.length === 1 ? 'Corrispondenze in 1 pagina, aggiunta alle fonti: ' : 'Corrispondenze in ' + added.length + ' pagine, aggiunte alle fonti: ') + titles(added, 3) + '.');
+    else if (res && res.docs.length) parts.push('Le pagine trovate sono già tra le fonti.');
+    else parts.push('Nessuna corrispondenza nell\'indice.');
+    if (m && !err) {
+      const siti = (m.siti || []).map(s => s.dominio);
+      parts.push('Indice: ' + fmtInt(m.documenti) + ' pagine di ' + siti.slice(0, 4).join(', ') + (siti.length > 4 ? ' e altri ' + (siti.length - 4) + ' siti' : '') + ', dall\'' + archivioLabel(m) + '.');
+      if (!added.length) parts.push('Trova i passaggi identici di almeno ' + (m.k + m.w - 1) + ' parole presenti nell\'indice, che contiene solo una parte di quei siti: un esito vuoto non dimostra che il testo sia originale.');
+    }
+    setMsg(el.idxMsg, parts.join(' '), !!err && !aborted);
+    if (added.length) { selectTab('src'); await runAnalysis(); }
+  }
+
   // ---------- disegno dei risultati ----------
   function selectTab(name) {
     TAB_NAMES.forEach((n, i) => { const on = n === name; el.tabs[i].setAttribute('aria-selected', String(on)); el.tabs[i].tabIndex = on ? 0 : -1; el.panes[n].hidden = !on; });
@@ -462,6 +533,11 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
   function compareHTML(it) {
     const doc = state.res.doc, src = srcObj(it.src), ord = ordOf(it.src);
     if (!src) return '<p class="cmp-note">La fonte non è più disponibile.</p>';
+    if (src.idx && it.kind === 'lit') {
+      // l'indice conserva solo impronte: il testo della pagina non c'è, si mostra il passaggio e il link
+      const p = it.p, dE = Math.min(p.iE, p.iS + 500);
+      return '<div class="cmp-grid one"><div><h4>Nel testo</h4><p class="cmp-t">' + tokHTML(doc.text, doc.toks, p.iS, dE, () => '') + '</p></div></div><p class="cmp-note">Secondo le impronte dell\'indice, questo passaggio compare nella pagina <a href="' + esc(src.idx.url) + '" target="_blank" rel="noopener noreferrer">' + esc(trunc(src.idx.title || src.idx.url, 80)) + '</a> (' + esc(src.idx.dominio) + '). L\'indice non conserva il testo delle pagine: aprila per verificare. I bordi del passaggio possono differire di qualche parola.</p>';
+    }
     let dh, sh, note;
     if (it.kind === 'lit') {
       const p = it.p, cap = 500, dE = Math.min(p.iE, p.iS + cap), sE = Math.min(p.jE, p.jS + cap);
@@ -674,6 +750,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     return d && !isNaN(d) ? 'versione del ' + d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : 'versione consultata';
   }
   function reportName(s) {
+    if (s.idx) return '<a href="' + esc(s.idx.url) + '">' + esc(s.name) + '</a><br><span class="meta">dall\'indice delle impronte, ' + esc(archivioLabel(s.idx)) + ': il testo della pagina non è conservato, i passaggi sono quelli del testo verificato</span>';
     if (!s.wiki) return esc(s.name);
     return '<a href="' + esc(s.wiki.url) + '">' + esc(s.name) + '</a><br><span class="meta">' + (s.wiki.perma ? '<a href="' + esc(s.wiki.perma) + '">' + esc(wikiVersion(s.wiki)) + '</a>' : esc(wikiVersion(s.wiki))) + ' · testo CC BY-SA</span>';
   }
@@ -713,7 +790,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     else {
       L.push('- coincide con le fonti: ' + pct(r.literal / body));
       L.push('- possibili parafrasi: ' + pct(r.paraWords / body));
-      r.per.forEach(p => { const s = srcObj(p.id), w = s && s.wiki; L.push('- fonte ' + ordOf(p.id) + ' «' + p.name + '»' + (w ? ' (' + (w.perma || w.url) + ', ' + wikiVersion(w) + ')' : '') + ': ' + pct(p.covered / body) + ', ' + p.passages + ' passaggi' + (p.passages ? ', il più lungo di ' + p.longest + ' parole' : '')); });
+      r.per.forEach(p => { const s = srcObj(p.id), w = s && s.wiki, x = s && s.idx; L.push('- fonte ' + ordOf(p.id) + ' «' + p.name + '»' + (w ? ' (' + (w.perma || w.url) + ', ' + wikiVersion(w) + ')' : '') + (x ? ' (' + x.url + ', indice delle impronte)' : '') + ': ' + pct(p.covered / body) + ', ' + p.passages + ' passaggi' + (p.passages ? ', il più lungo di ' + p.longest + ' parole' : '')); });
       L.push('- ' + settingsLine());
     }
     L.push('', 'SEGNALI AI');
@@ -786,6 +863,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
   [el.optK, el.optGap, el.optQuotes, el.optBiblio, el.optPara].forEach(n => n.addEventListener('change', readOptsUI));
   el.optWiki.addEventListener('change', () => { state.opts.wikiLang = el.optWiki.value; saveOpts(); });
   el.wikiBtn.addEventListener('click', runWiki);
+  el.idxBtn.addEventListener('click', runIdx);
   el.runBtn.addEventListener('click', runAnalysis);
   el.tabs.forEach((t, i) => {
     t.addEventListener('click', () => selectTab(TAB_NAMES[i]));
