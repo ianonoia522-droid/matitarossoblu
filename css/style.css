@@ -96,6 +96,10 @@ textarea:focus-visible,input:focus-visible,select:focus-visible{outline:2px soli
 .sn{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 4px;border-radius:3px;background:var(--sc);color:var(--sheet);font:600 11px/1 var(--f-mono)}
 .src .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;font-size:14px}
 .src .wc{font:12px/1 var(--f-mono);color:var(--ink-3);white-space:nowrap}
+a.nm{color:inherit;text-decoration:underline;text-decoration-color:var(--ink-3);text-decoration-thickness:1px;text-underline-offset:3px}
+a.nm:hover{color:var(--blu);text-decoration-color:currentColor}
+.btn.stop{border-color:var(--rosso);color:var(--rosso)}
+.btn.stop:hover{background:var(--rosso-soft)}
 .x{border:0;background:none;color:var(--ink-3);font-size:18px;line-height:1;padding:3px 7px;border-radius:3px;cursor:pointer}
 .x:hover{color:var(--rosso);background:var(--rosso-soft)}
 .src-empty{margin:0;font-size:13px;color:var(--ink-3);padding:10px 12px;border:1px dashed var(--rule);border-radius:4px}

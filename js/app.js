@@ -1,7 +1,9 @@
-/* Matita Rossoblù · interfaccia. Nessuna richiesta di rete: librerie e font sono serviti dal sito stesso. Licenza MIT. */
+/* Matita Rossoblù · interfaccia. Librerie e font sono serviti dal sito stesso; l'unico collegamento esterno è la ricerca
+   su Wikipedia (js/wiki.js), che parte solo dal pulsante «Cerca su Wikipedia». Licenza MIT. */
 (function () {
   'use strict';
   const OPTS_KEY = 'matita-rossoblu:opts';
+  const WIKI_KEY = 'matita-rossoblu:wiki';
   const VENDOR = 'vendor/';
   const E = id => document.getElementById(id);
   const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll(s));
@@ -39,7 +41,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
 
   const state = {
     sources: [], nextId: 1, example: false,
-    opts: { k: 6, gap: 3, ignoreQuotes: true, ignoreBiblio: true, paraSens: 'normale' },
+    opts: { k: 6, gap: 3, ignoreQuotes: true, ignoreBiblio: true, paraSens: 'normale', wikiLang: 'auto' },
     res: null, ai: null, fp: null, fpShown: 8, snap: null, itemMap: new Map(), openKey: null, aiSel: -1,
   };
 
@@ -48,7 +50,8 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     exampleBar: E('exampleBar'), clearBtn: E('clearBtn'),
     srcPanel: E('srcPanel'), srcList: E('srcList'), srcEmpty: E('srcEmpty'), srcCount: E('srcCount'), srcFile: E('srcFile'), srcMsg: E('srcMsg'),
     pasteToggle: E('pasteToggle'), pasteBox: E('pasteBox'), pasteName: E('pasteName'), pasteText: E('pasteText'), pasteAdd: E('pasteAdd'), pasteCancel: E('pasteCancel'),
-    optK: E('optK'), optGap: E('optGap'), optQuotes: E('optQuotes'), optBiblio: E('optBiblio'), optPara: E('optPara'),
+    wikiBtn: E('wikiBtn'), wikiMsg: E('wikiMsg'),
+    optK: E('optK'), optGap: E('optGap'), optQuotes: E('optQuotes'), optBiblio: E('optBiblio'), optPara: E('optPara'), optWiki: E('optWiki'),
     runBtn: E('runBtn'), runStatus: E('runStatus'), staleBar: E('staleBar'),
     tabs: [E('tab-src'), E('tab-web'), E('tab-ai')], panes: { src: E('pane-src'), web: E('pane-web'), ai: E('pane-ai') },
     tabSrcNum: E('tabSrcNum'), tabWebNum: E('tabWebNum'), tabAiNum: E('tabAiNum'),
@@ -66,15 +69,17 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
       if (typeof o.ignoreQuotes === 'boolean') state.opts.ignoreQuotes = o.ignoreQuotes;
       if (typeof o.ignoreBiblio === 'boolean') state.opts.ignoreBiblio = o.ignoreBiblio;
       if (['normale', 'alta', 'off'].includes(o.paraSens)) state.opts.paraSens = o.paraSens;
+      if (['auto', 'it', 'en'].includes(o.wikiLang)) state.opts.wikiLang = o.wikiLang;
     } catch (e) { /* archiviazione non disponibile */ }
   }
   function saveOpts() { try { localStorage.setItem(OPTS_KEY, JSON.stringify(state.opts)); } catch (e) { /* ignora */ } }
   function syncOptsUI() {
     el.optK.value = String(state.opts.k); el.optGap.value = String(state.opts.gap);
     el.optQuotes.checked = state.opts.ignoreQuotes; el.optBiblio.checked = state.opts.ignoreBiblio; el.optPara.value = state.opts.paraSens;
+    el.optWiki.value = state.opts.wikiLang;
   }
   function readOptsUI() {
-    state.opts = { k: parseInt(el.optK.value, 10) || 6, gap: parseInt(el.optGap.value, 10) || 0, ignoreQuotes: el.optQuotes.checked, ignoreBiblio: el.optBiblio.checked, paraSens: el.optPara.value };
+    state.opts = { k: parseInt(el.optK.value, 10) || 6, gap: parseInt(el.optGap.value, 10) || 0, ignoreQuotes: el.optQuotes.checked, ignoreBiblio: el.optBiblio.checked, paraSens: el.optPara.value, wikiLang: el.optWiki.value };
     saveOpts(); markStale();
   }
 
@@ -96,20 +101,26 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
   }
   function leaveExample(clearDoc) {
     if (!state.example) return;
+    if (wiki.running && wiki.ctrl) wiki.ctrl.abort();   // la ricerca riguardava il testo d'esempio
     state.example = false;
     state.sources = state.sources.filter(s => !s.example);
     if (clearDoc) el.docText.value = '';
     el.exampleBar.hidden = true;
     renderSources(); updateDocCount();
   }
+  // nome della fonte; le voci di Wikipedia diventano un link alla voce
+  function nameHTML(s, cls) {
+    if (s && s.wiki) return '<a class="' + cls + '" href="' + esc(s.wiki.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(s.name) + ' · apri la voce">' + esc(s.name) + '</a>';
+    return '<span class="' + cls + '" title="' + esc(s.name) + '">' + esc(s.name) + '</span>';
+  }
   function renderSources() {
-    el.srcList.innerHTML = state.sources.map((s, i) => '<li class="src ' + cc(i + 1) + '"><span class="sn">' + (i + 1) + '</span><span class="nm" title="' + esc(s.name) + '">' + esc(s.name) + '</span><span class="wc">' + fmtInt(s.words) + ' parole</span><button type="button" class="x" data-rm="' + s.id + '" aria-label="Rimuovi ' + esc(s.name) + '">×</button></li>').join('');
+    el.srcList.innerHTML = state.sources.map((s, i) => '<li class="src ' + cc(i + 1) + '"><span class="sn">' + (i + 1) + '</span>' + nameHTML(s, 'nm') + '<span class="wc">' + fmtInt(s.words) + ' parole</span><button type="button" class="x" data-rm="' + s.id + '" aria-label="Rimuovi ' + esc(s.name) + '">×</button></li>').join('');
     el.srcEmpty.hidden = state.sources.length > 0;
     const tot = state.sources.reduce((a, s) => a + s.words, 0);
     el.srcCount.textContent = state.sources.length ? state.sources.length + (state.sources.length === 1 ? ' fonte · ' : ' fonti · ') + fmtInt(tot) + ' parole' : '';
   }
-  function addSource(name, text) {
-    state.sources.push({ id: state.nextId++, name: name || ('Fonte ' + (state.sources.length + 1)), text, words: MR.countWords(text) });
+  function addSource(name, text, extra) {
+    state.sources.push(Object.assign({ id: state.nextId++, name: name || ('Fonte ' + (state.sources.length + 1)), text, words: MR.countWords(text) }, extra || {}));
     renderSources(); markStale();
   }
 
@@ -267,6 +278,79 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     finally { el.runBtn.disabled = false; }
   }
 
+  // ---------- ricerca su Wikipedia (solo su richiesta: invia a Wikipedia alcune frasi brevi del testo) ----------
+  const wikiClient = window.MRWiki ? MRWiki.createClient({ store: { get: () => localStorage.getItem(WIKI_KEY), set: v => localStorage.setItem(WIKI_KEY, v) } }) : null;
+  const wiki = { running: false, ctrl: null };
+  const wikiLangOf = text => (state.opts.wikiLang === 'it' || state.opts.wikiLang === 'en' ? state.opts.wikiLang : MR.detectLang(text));
+  function titles(list, max) {
+    const a = list.slice(0, max).map(t => '«' + t + '»');
+    return a.join(', ') + (list.length > max ? ' e ' + (list.length - max) + (list.length - max === 1 ? ' altra' : ' altre') : '');
+  }
+  function setWikiRunning(on) {
+    wiki.running = on;
+    el.wikiBtn.textContent = on ? 'Interrompi la ricerca' : 'Cerca su Wikipedia';
+    el.wikiBtn.classList.toggle('stop', on);
+  }
+  function wikiErrText(e) {
+    switch (e && e.kind) {
+      case 'limit': return 'Wikipedia ha chiesto di rallentare: troppe richieste dal tuo indirizzo in poco tempo. Riprova tra ' + e.detail + ' secondi.';
+      case 'timeout': return 'Wikipedia non ha risposto in tempo. Riprova tra poco.';
+      case 'http': return 'Wikipedia ha risposto con un errore (codice ' + e.detail + '). Riprova più tardi.';
+      case 'format': return 'Wikipedia ha inviato una risposta illeggibile. Riprova più tardi.';
+      case 'api': return 'Wikipedia ha rifiutato la richiesta: ' + e.detail + '.';
+      case 'network': return navigator.onLine === false ? 'La connessione si è interrotta: la ricerca su Wikipedia ha bisogno di internet.' : 'Wikipedia non risponde. Può dipendere dalla connessione, da un\'estensione del browser che blocca le richieste o dal limite di richieste di Wikipedia: riprova tra un minuto.';
+      default: return 'Errore imprevisto durante la ricerca su Wikipedia: ' + (e && e.message ? e.message : e) + '.';
+    }
+  }
+  async function runWiki(ev) {
+    // il secondo clic di un doppio clic non interrompe la ricerca appena avviata
+    if (wiki.running) { if (wiki.ctrl && !(ev && ev.detail > 1)) wiki.ctrl.abort(); return; }
+    if (!wikiClient) { setMsg(el.wikiMsg, 'Il modulo di ricerca su Wikipedia non si è caricato: controlla che il file js/wiki.js sia stato pubblicato.', true); return; }
+    const text = el.docText.value;
+    if (MR.countWords(text) < 20) { setMsg(el.wikiMsg, 'Incolla o carica prima il testo da verificare: servono almeno 20 parole.', true); return; }
+    if (navigator.onLine === false) { setMsg(el.wikiMsg, 'Sei offline: la ricerca su Wikipedia ha bisogno di internet.', true); return; }
+    const lang = wikiLangOf(text), opts = Object.assign({}, state.opts);
+    const wq = MR.wikiQueries(text, opts);
+    if (!wq.groups.length && !wq.topic) { setMsg(el.wikiMsg, 'Nel testo non ci sono frasi da cercare: servono almeno 6 parole di seguito, fuori dalle citazioni.', true); return; }
+    const where = 'Wikipedia in ' + (lang === 'en' ? 'inglese' : 'italiano');
+    const example = state.example, added = [];
+    const have = new Set(state.sources.filter(s => s.wiki && s.wiki.lang === lang).map(s => s.wiki.pageid));
+    wiki.ctrl = new AbortController();
+    setWikiRunning(true);
+    setMsg(el.wikiMsg, where + ': avvio della ricerca…');
+    const out = await MRWiki.run(wikiClient, {
+      lang, groups: wq.groups, topic: wq.topic, skip: have, signal: wiki.ctrl.signal,
+      maxArticles: MR.countWords(text) > 2000 ? 5 : 4,
+      onWait: s => setMsg(el.wikiMsg, where + ': Wikipedia limita le richieste anonime, attendo ' + s + ' s prima della prossima…'),
+      onProgress: (kind, i, n, title) => setMsg(el.wikiMsg, kind === 'search' ? where + ': ricerca ' + i + ' di ' + n + '…' : where + ': lettura della voce «' + title + '», ' + i + ' di ' + n + '…'),
+      check: p => {
+        const body = normalizeText(p.text);
+        const x = MR.analyzePlagiarism(text, [{ id: 0, name: p.title, text: body }], opts).per[0];
+        if (!x.passages && !x.paraN) return false;
+        const name = (lang === 'en' ? 'Wikipedia (inglese) · ' : 'Wikipedia · ') + p.title;
+        addSource(name, body, { example, wiki: { lang, pageid: p.pageid, title: p.title, url: p.url, perma: p.perma, revid: p.revid, ts: p.timestamp } });
+        added.push(p.title);
+        return true;
+      },
+    });
+    setWikiRunning(false);
+    wiki.ctrl = null;
+    const e = out.error, aborted = e && e.name === 'AbortError';
+    if (e && !aborted && !e.kind) console.error(e);
+    const parts = [];
+    if (aborted) parts.push('Ricerca su Wikipedia interrotta.');
+    else if (e) parts.push(wikiErrText(e));
+    if (added.length) parts.push((added.length === 1 ? 'Corrispondenze in 1 voce, aggiunta alle fonti: ' : 'Corrispondenze in ' + added.length + ' voci, aggiunte alle fonti: ') + titles(added, 4) + '.');
+    else if (!e) parts.push('Nessuna corrispondenza su ' + where + '.');
+    if (out.searches) parts.push('Frasi cercate: ' + out.phrases + (out.read.length ? '; voci lette: ' + out.read.length : '') + '.');
+    const none = out.read.filter(t => added.indexOf(t) < 0);
+    if (none.length) parts.push('Senza corrispondenze: ' + titles(none, 3) + '.');
+    if (out.skipped.length) parts.push('Già tra le fonti: ' + titles(out.skipped, 3) + '.');
+    if (!added.length && !e) parts.push('Un risultato vuoto non dimostra che il testo sia originale: la ricerca prova un campione di frasi e trova le copie in cui almeno una di quelle frasi è rimasta identica.');
+    setMsg(el.wikiMsg, parts.join(' '), !!e && !aborted);
+    if (added.length) { selectTab('src'); await runAnalysis(); }
+  }
+
   // ---------- disegno dei risultati ----------
   function selectTab(name) {
     TAB_NAMES.forEach((n, i) => { const on = n === name; el.tabs[i].setAttribute('aria-selected', String(on)); el.tabs[i].tabIndex = on ? 0 : -1; el.panes[n].hidden = !on; });
@@ -405,8 +489,9 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
   function renderSrcPane() {
     const r = state.res, snap = state.snap, pane = el.panes.src, body = Math.max(1, r.bodyWords);
     if (!snap.sources.length) {
-      pane.innerHTML = '<div class="pane-note"><p><b>Nessuna fonte caricata.</b> L\'antiplagio confronta il testo solo con le fonti che aggiungi al punto 2. Senza fonti restano la <button type="button" class="link" data-goto="web">ricerca web manuale</button> e i <button type="button" class="link" data-goto="ai">segnali AI</button>.</p></div>';
+      pane.innerHTML = '<div class="pane-note"><p><b>Nessuna fonte caricata.</b> L\'antiplagio confronta il testo con le fonti che aggiungi al punto 2: file tuoi, testi incollati o le voci trovate dal pulsante <button type="button" class="link" data-wiki>Cerca su Wikipedia</button>. Senza fonti restano la <button type="button" class="link" data-goto="web">ricerca web manuale</button> e i <button type="button" class="link" data-goto="ai">segnali AI</button>.</p></div>';
       $$('[data-goto]', pane).forEach(b => b.addEventListener('click', () => { const n = b.getAttribute('data-goto'); selectTab(n); el.tabs[TAB_NAMES.indexOf(n)].focus(); }));
+      $$('[data-wiki]', pane).forEach(b => b.addEventListener('click', () => { el.wikiBtn.scrollIntoView({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' }); el.wikiBtn.focus({ preventScroll: true }); }));
       return;
     }
     const items = passageItems();
@@ -420,7 +505,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
       let det = p.passages === 1 ? '1 passaggio' : p.passages + ' passaggi';
       if (p.passages) det += ', il più lungo di ' + p.longest + ' parole';
       if (p.paraN) det += ' · ' + p.paraN + (p.paraN === 1 ? ' possibile parafrasi' : ' possibili parafrasi');
-      return '<li class="' + cc(ord) + '"><span class="sn">' + ord + '</span><span class="nm" title="' + esc(p.name) + '">' + esc(p.name) + '</span><span class="pc">' + pct(p.covered / body) + '</span><span class="bar"><i data-w="' + (p.covered / body * 100).toFixed(2) + '"></i></span><span class="det">' + det + '</span></li>';
+      return '<li class="' + cc(ord) + '"><span class="sn">' + ord + '</span>' + nameHTML(srcObj(p.id) || p, 'nm') + '<span class="pc">' + pct(p.covered / body) + '</span><span class="bar"><i data-w="' + (p.covered / body * 100).toFixed(2) + '"></i></span><span class="det">' + det + '</span></li>';
     }).join('');
     let html = '<div class="sum"><div><div class="figs"><div class="fig-b"><span class="fig blu">' + pct(r.literal / body) + '</span><span class="fig-lbl">del testo coincide con le fonti, parola per parola o con poche modifiche</span></div><div class="fig-b"><span class="fig fig-2">' + pct(r.paraWords / body) + '</span><span class="fig-lbl">in frasi che riprendono una fonte con parole in parte diverse</span></div></div><p class="sum-note">' + esc(note) + '</p></div><div><h3 class="sec-h per-h">Per fonte</h3><ol class="per-src">' + per + '</ol></div></div>';
     const legend = '<span class="legend"><span class="lg m-lg">copia</span><span class="lg pp-lg">possibile parafrasi</span>' + (doc.quotes.length || doc.biblioStart >= 0 ? '<span class="lg q-lg">escluso</span>' : '') + '</span>';
@@ -476,7 +561,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     const fp = state.fp, pane = el.panes.web;
     if (!fp.length) { pane.innerHTML = '<p class="empty">Il testo è troppo breve per estrarre frasi da cercare: servono frasi di almeno 9 parole.</p>'; return; }
     const shown = fp.slice(0, state.fpShown), rest = fp.length - shown.length;
-    pane.innerHTML = '<div class="pane-intro"><p>Le frasi più caratteristiche del testo, distribuite dall\'inizio alla fine. Ogni pulsante apre il motore di ricerca con la frase tra virgolette, cioè cercata esattamente: è il controllo manuale che fanno anche i docenti, e trova le copie da pagine web indicizzate.</p><p class="small">Cliccando, la frase viene inviata al motore di ricerca scelto: è l\'unico momento in cui una parte del testo esce dal tuo computer, e solo se lo decidi tu. Se la ricerca non trova nulla, il testo potrebbe comunque provenire da libri, tesi o archivi non indicizzati.</p></div><ol class="fplist">' + shown.map(fpHTML).join('') + '</ol>' + (rest > 0 ? '<div><button type="button" class="btn" id="fpMore">Mostra altre ' + Math.min(8, rest) + ' frasi</button></div>' : '');
+    pane.innerHTML = '<div class="pane-intro"><p>Le frasi più caratteristiche del testo, distribuite dall\'inizio alla fine. Ogni pulsante apre il motore di ricerca con la frase tra virgolette, cioè cercata esattamente: è il controllo manuale che fanno anche i docenti, e trova le copie da pagine web indicizzate. Per Wikipedia c\'è anche la ricerca automatica, con il pulsante «Cerca su Wikipedia» al punto 2.</p><p class="small">Cliccando, la frase viene inviata al motore di ricerca scelto. Il testo esce dal tuo computer solo così o con la ricerca su Wikipedia, e solo se lo decidi tu. Se la ricerca non trova nulla, il testo potrebbe comunque provenire da libri, tesi o archivi non indicizzati.</p></div><ol class="fplist">' + shown.map(fpHTML).join('') + '</ol>' + (rest > 0 ? '<div><button type="button" class="btn" id="fpMore">Mostra altre ' + Math.min(8, rest) + ' frasi</button></div>' : '');
     const more = E('fpMore');
     if (more) more.addEventListener('click', () => { state.fpShown += 8; renderWebPane(); updateTabNums(); });
     $$('[data-copy]', pane).forEach(b => b.addEventListener('click', () => {
@@ -568,9 +653,10 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
   }
 
   // ---------- rapporto e riepilogo ----------
-  const REPORT_CSS = 'body{margin:0;background:#F4F5F8;color:#151B2B;font:15px/1.55 "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:900px;margin:0 auto;padding:32px 20px 64px}h1{font:700 32px/1.1 "Bodoni Moda",Didot,Georgia,serif;margin:0 0 6px}h2{font:600 13px/1.3 system-ui,sans-serif;text-transform:uppercase;letter-spacing:.07em;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid #D5DBE5}h3{font-size:15px;margin:22px 0 8px}.meta{color:#5B6579;font-size:13px}.note{background:#FFF6E3;border:1px solid #EBD6A8;padding:10px 12px;font-size:13.5px;border-radius:4px}.figs{display:flex;flex-wrap:wrap;gap:12px 36px}.big{font:500 44px/1 "Bodoni Moda",Didot,Georgia,serif}table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 8px;border-bottom:1px solid #E3E7EE}th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:#5B6579}.ex{font-family:Georgia,serif;font-style:italic;color:#38425A}.doc{white-space:pre-wrap;font:15px/1.8 Georgia,serif;background:#FFF;border:1px solid #D5DBE5;padding:18px 20px;border-radius:4px}.m{background:var(--sbg);box-shadow:inset 0 -2px 0 var(--sc)}.pp{text-decoration:underline dotted var(--sc) 2px;text-underline-offset:3px}.q{color:#7A8398}sup.fn{font:600 10px monospace;color:var(--sc)}.sn{display:inline-block;min-width:18px;padding:1px 4px;border-radius:3px;background:var(--sc);color:#FFF;font:600 11px monospace;text-align:center}.c1{--sc:#1F4FCC;--sbg:#DCE5FA}.c2{--sc:#8F5C0E;--sbg:#F4E3C1}.c3{--sc:#0B7A6E;--sbg:#CBEAE4}.c4{--sc:#A12F79;--sbg:#F2D7E9}.c5{--sc:#4C6B10;--sbg:#DFEBC5}.c6{--sc:#5848C6;--sbg:#E1DCF8}ul{padding-left:18px}li{margin:4px 0}@media print{body{background:#FFF}main{padding:0}.doc{border:0;padding:0}}';
+  const REPORT_CSS = 'body{margin:0;background:#F4F5F8;color:#151B2B;font:15px/1.55 "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:900px;margin:0 auto;padding:32px 20px 64px}h1{font:700 32px/1.1 "Bodoni Moda",Didot,Georgia,serif;margin:0 0 6px}h2{font:600 13px/1.3 system-ui,sans-serif;text-transform:uppercase;letter-spacing:.07em;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid #D5DBE5}h3{font-size:15px;margin:22px 0 8px}.meta{color:#5B6579;font-size:13px}.note{background:#FFF6E3;border:1px solid #EBD6A8;padding:10px 12px;font-size:13.5px;border-radius:4px}.figs{display:flex;flex-wrap:wrap;gap:12px 36px}.big{font:500 44px/1 "Bodoni Moda",Didot,Georgia,serif}table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 8px;border-bottom:1px solid #E3E7EE}th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:#5B6579}.ex{font-family:Georgia,serif;font-style:italic;color:#38425A}.doc{white-space:pre-wrap;font:15px/1.8 Georgia,serif;background:#FFF;border:1px solid #D5DBE5;padding:18px 20px;border-radius:4px}.m{background:var(--sbg);box-shadow:inset 0 -2px 0 var(--sc)}.pp{text-decoration:underline dotted var(--sc) 2px;text-underline-offset:3px}.q{color:#7A8398}sup.fn{font:600 10px monospace;color:var(--sc)}.sn{display:inline-block;min-width:18px;padding:1px 4px;border-radius:3px;background:var(--sc);color:#FFF;font:600 11px monospace;text-align:center}.c1{--sc:#1F4FCC;--sbg:#DCE5FA}.c2{--sc:#8F5C0E;--sbg:#F4E3C1}.c3{--sc:#0B7A6E;--sbg:#CBEAE4}.c4{--sc:#A12F79;--sbg:#F2D7E9}.c5{--sc:#4C6B10;--sbg:#DFEBC5}.c6{--sc:#5848C6;--sbg:#E1DCF8}ul{padding-left:18px}li{margin:4px 0}a{color:#1F4FCC}@media print{body{background:#FFF}main{padding:0}.doc{border:0;padding:0}}';
   const REPORT_LIMITS = [
-    'Il confronto è limitato alle fonti fornite: non include internet, Turnitin, Compilatio o archivi di tesi.',
+    'Il confronto è limitato alle fonti fornite e alle eventuali voci di Wikipedia aggiunte: non include il resto di internet, Turnitin, Compilatio o archivi di tesi.',
+    'La ricerca su Wikipedia prova un campione di frasi del testo: un esito vuoto non dimostra che il testo sia originale.',
     'Una corrispondenza può essere legittima (citazione corretta, definizione normativa, terminologia tecnica): ogni passaggio va letto.',
     'Traduzioni, parafrasi con sinonimi e plagio di idee sfuggono al confronto lessicale.',
     "L'indice dei segnali AI misura caratteristiche di stile. Non è una probabilità e non prova l'uso di intelligenza artificiale.",
@@ -583,6 +669,14 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     if (o.ignoreBiblio && doc.biblioStart >= 0) t += '; bibliografia esclusa (' + doc.biblioWords + ' parole)';
     return t + '.';
   }
+  function wikiVersion(w) {
+    const d = w.ts ? new Date(w.ts) : null;
+    return d && !isNaN(d) ? 'versione del ' + d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : 'versione consultata';
+  }
+  function reportName(s) {
+    if (!s.wiki) return esc(s.name);
+    return '<a href="' + esc(s.wiki.url) + '">' + esc(s.name) + '</a><br><span class="meta">' + (s.wiki.perma ? '<a href="' + esc(s.wiki.perma) + '">' + esc(wikiVersion(s.wiki)) + '</a>' : esc(wikiVersion(s.wiki))) + ' · testo CC BY-SA</span>';
+  }
   function buildReport() {
     const r = state.res, ai = state.ai, snap = state.snap, body = Math.max(1, r.bodyWords), items = passageItems();
     const date = snap.at.toLocaleString('it-IT', { dateStyle: 'long', timeStyle: 'short' });
@@ -594,7 +688,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     else {
       h += '<div class="figs"><div><span class="big">' + pct(r.literal / body) + '</span><br>coincide con le fonti</div><div><span class="big">' + pct(r.paraWords / body) + '</span><br>possibili parafrasi</div></div>';
       h += '<p class="meta">' + esc(settingsLine()) + '</p>';
-      h += '<table><thead><tr><th>Fonte</th><th>Nome</th><th>Copertura</th><th>Passaggi</th><th>Il più lungo</th><th>Parafrasi</th></tr></thead><tbody>' + r.per.map(p => { const ord = ordOf(p.id); return '<tr class="' + cc(ord) + '"><td><span class="sn">' + ord + '</span></td><td>' + esc(p.name) + '</td><td>' + pct(p.covered / body) + '</td><td>' + p.passages + '</td><td>' + (p.passages ? p.longest + ' parole' : '–') + '</td><td>' + p.paraN + '</td></tr>'; }).join('') + '</tbody></table>';
+      h += '<table><thead><tr><th>Fonte</th><th>Nome</th><th>Copertura</th><th>Passaggi</th><th>Il più lungo</th><th>Parafrasi</th></tr></thead><tbody>' + r.per.map(p => { const ord = ordOf(p.id); return '<tr class="' + cc(ord) + '"><td><span class="sn">' + ord + '</span></td><td>' + reportName(srcObj(p.id) || p) + '</td><td>' + pct(p.covered / body) + '</td><td>' + p.passages + '</td><td>' + (p.passages ? p.longest + ' parole' : '–') + '</td><td>' + p.paraN + '</td></tr>'; }).join('') + '</tbody></table>';
       if (items.length) {
         h += '<h3>Passaggi</h3><table><thead><tr><th>Fonte</th><th>Tipo</th><th>Nel testo</th><th>Nella fonte</th></tr></thead><tbody>' + items.map(it => { const ord = ordOf(it.src); return '<tr class="' + cc(ord) + '"><td><span class="sn">' + ord + '</span></td><td>' + esc(typeLabel(it)) + '<br><span class="meta">' + esc(metaLabel(it)) + '</span></td><td class="ex">' + esc(trunc(docExcerpt(it), 400)) + '</td><td class="ex">' + esc(trunc(srcExcerpt(it), 400)) + '</td></tr>'; }).join('') + '</tbody></table>';
       }
@@ -619,7 +713,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     else {
       L.push('- coincide con le fonti: ' + pct(r.literal / body));
       L.push('- possibili parafrasi: ' + pct(r.paraWords / body));
-      r.per.forEach(p => L.push('- fonte ' + ordOf(p.id) + ' «' + p.name + '»: ' + pct(p.covered / body) + ', ' + p.passages + ' passaggi' + (p.passages ? ', il più lungo di ' + p.longest + ' parole' : '')));
+      r.per.forEach(p => { const s = srcObj(p.id), w = s && s.wiki; L.push('- fonte ' + ordOf(p.id) + ' «' + p.name + '»' + (w ? ' (' + (w.perma || w.url) + ', ' + wikiVersion(w) + ')' : '') + ': ' + pct(p.covered / body) + ', ' + p.passages + ' passaggi' + (p.passages ? ', il più lungo di ' + p.longest + ' parole' : '')); });
       L.push('- ' + settingsLine());
     }
     L.push('', 'SEGNALI AI');
@@ -666,8 +760,9 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
   el.docFile.addEventListener('change', () => { const f = el.docFile.files && el.docFile.files[0]; if (f) loadDocFile(f); el.docFile.value = ''; });
   el.srcFile.addEventListener('change', () => { const fs = Array.from(el.srcFile.files || []); el.srcFile.value = ''; addSourceFiles(fs); });
   el.clearBtn.addEventListener('click', () => {
+    if (wiki.running && wiki.ctrl) wiki.ctrl.abort();
     leaveExample(true); state.res = null; renderAll(); el.staleBar.hidden = true;
-    setStatus(''); setMsg(el.docMsg, ''); setMsg(el.srcMsg, ''); el.docText.focus();
+    setStatus(''); setMsg(el.docMsg, ''); setMsg(el.srcMsg, ''); setMsg(el.wikiMsg, ''); el.docText.focus();
   });
   el.srcList.addEventListener('click', e => {
     const b = e.target.closest('[data-rm]'); if (!b) return;
@@ -689,6 +784,8 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     setMsg(el.srcMsg, 'Fonte aggiunta.');
   });
   [el.optK, el.optGap, el.optQuotes, el.optBiblio, el.optPara].forEach(n => n.addEventListener('change', readOptsUI));
+  el.optWiki.addEventListener('change', () => { state.opts.wikiLang = el.optWiki.value; saveOpts(); });
+  el.wikiBtn.addEventListener('click', runWiki);
   el.runBtn.addEventListener('click', runAnalysis);
   el.tabs.forEach((t, i) => {
     t.addEventListener('click', () => selectTab(TAB_NAMES[i]));

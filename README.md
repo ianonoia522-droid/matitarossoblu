@@ -1,6 +1,6 @@
 # Matita Rossoblù
 
-Antiplagio sulle fonti che fornisci e segnali di scrittura generata da AI. È gratuito e open source, e funziona interamente nel browser: il testo non lascia il computer di chi lo usa.
+Antiplagio sulle tue fonti e su Wikipedia, segnali di scrittura generata da AI. È gratuito e open source, e l'analisi avviene nel browser: il testo lascia il computer solo per le ricerche che chi lo usa avvia, cioè alcune frasi inviate a Wikipedia o a un motore di ricerca.
 
 **Usalo qui:** https://ianonoia522-droid.github.io/matitarossoblu/
 
@@ -9,6 +9,7 @@ Per segnalare un problema o proporre una modifica, apri una issue in questo repo
 ## Cosa fa
 
 - **Confronto con le fonti.** Trova copie identiche, copie con poche parole cambiate e frasi che riprendono una fonte con parole in parte diverse. Mostra il testo marcato, l'elenco dei passaggi e il confronto parola per parola.
+- **Ricerca su Wikipedia.** Con un pulsante cerca su Wikipedia, in italiano o in inglese, un campione di frasi del testo, legge le voci che le contengono e aggiunge come fonti quelle che coincidono davvero, con il link alla versione letta.
 - **Ricerca web manuale.** Estrae le frasi più caratteristiche del testo e prepara la ricerca esatta, tra virgolette, su Google, Google Scholar e Bing.
 - **Segnali AI.** Calcola un indice da 0 a 100 basato su caratteristiche di stile e mostra una mappa frase per frase con i motivi di ogni segnalazione.
 - Legge file .docx, .pdf con testo selezionabile, .txt, .md e .html. Esporta un rapporto HTML, da stampare o salvare in PDF, e un riepilogo testuale.
@@ -17,7 +18,8 @@ Per segnalare un problema o proporre una modifica, apri una issue in questo repo
 
 Da leggere prima di usarlo.
 
-- Non cerca su internet e non consulta database come Turnitin o Compilatio: confronta il testo solo con le fonti caricate.
+- Non cerca nel resto di internet e non consulta database come Turnitin o Compilatio: confronta il testo con le fonti caricate e, se lo chiedi, con Wikipedia.
+- La ricerca su Wikipedia è un campione: fino a 20 frasi e 5 voci per volta. Trova una copia se almeno una delle frasi cercate è rimasta identica nella versione attuale della voce; non vede le versioni precedenti né i siti che copiano Wikipedia. Un esito vuoto non dimostra che il testo sia originale.
 - Non riconosce traduzioni, parafrasi costruite con sinonimi o il plagio di idee.
 - **L'indice AI non è una probabilità e non è una prova.** Non è stato calibrato su un corpus: i test inclusi verificano solo che il comportamento non peggiori da una versione all'altra. Un testo umano formale o accademico può ottenere un indice alto. Non va usato per accusare nessuno.
 - I PDF scansionati sono immagini e non contengono testo: prima serve un OCR.
@@ -25,13 +27,14 @@ Da leggere prima di usarlo.
 ## Privacy
 
 - **Nessun server.** L'analisi è JavaScript eseguito nel browser.
-- **Nessuna richiesta esterna.** Librerie e font sono ospitati insieme alla pagina, e la Content Security Policy impedisce al browser di contattare altri domini. Si può verificare negli strumenti per sviluppatori, alla scheda Rete.
-- **Nessun cookie e nessuna statistica.** Le impostazioni del confronto restano nel `localStorage` del browser.
-- **Unica eccezione volontaria:** i pulsanti della ricerca web aprono il motore di ricerca con la frase scelta.
+- **Richieste esterne solo su richiesta.** Librerie e font sono ospitati insieme alla pagina. La Content Security Policy permette al browser di contattare soltanto `it.wikipedia.org` ed `en.wikipedia.org`, usati dalla ricerca su Wikipedia. Si può verificare negli strumenti per sviluppatori, alla scheda Rete.
+- **Cosa riceve Wikipedia.** Solo dopo il clic su «Cerca su Wikipedia»: fino a 20 frasi di 6 parole e 3 parole chiave, più le richieste per leggere le voci trovate. Il testo intero non viene inviato. Le richieste sono anonime, senza cookie né intestazioni aggiunte; Wikimedia vede comunque l'indirizzo IP, come per qualsiasi visita a Wikipedia.
+- **Nessun cookie e nessuna statistica.** Le impostazioni e il conteggio delle richieste a Wikipedia restano nel `localStorage` del browser.
+- **Ricerca web manuale.** I pulsanti aprono il motore di ricerca scelto con la frase indicata.
 
 ## Usarlo in locale
 
-Scarica la cartella e apri `index.html` con un browser recente: Chrome, Edge, Firefox o Safari. Funziona anche senza connessione.
+Scarica la cartella e apri `index.html` con un browser recente: Chrome, Edge, Firefox o Safari. Funziona anche senza connessione, tranne la ricerca su Wikipedia.
 
 Aperto da file locale, PDF.js lavora senza worker, quindi i PDF molto lunghi richiedono qualche secondo in più.
 
@@ -50,10 +53,12 @@ Va bene qualsiasi hosting statico, come Netlify, Cloudflare Pages o un server Ap
 index.html           pagina
 css/style.css        stili
 js/engine.js         motore di analisi: JavaScript puro, senza dipendenze, usabile anche in Node
+js/wiki.js           ricerca su Wikipedia: richieste, limite di frequenza, scelta delle voci
 js/app.js            interfaccia
 vendor/              mammoth.js 1.6.0 (.docx) e PDF.js 3.11.174 (.pdf), caricati solo quando servono
 fonts/               IBM Plex Sans, Serif, Mono e Bodoni Moda (woff2, alfabeto latino)
-tests/run.js         test del motore: node tests/run.js
+tests/run.js         test del motore e della ricerca su Wikipedia: node tests/run.js
+tests/wiki-test.js   test di js/wiki.js con un orologio simulato e una Wikipedia finta
 tests/campioni.js    testi campione usati dai test
 tests/browser_test.py  test completo in Chrome (facoltativo, richiede Python, Playwright e python-docx)
 ```
@@ -63,6 +68,10 @@ tests/browser_test.py  test completo in Chrome (facoltativo, richiede Python, Pl
 **Copie.** Il testo viene diviso in parole normalizzate: minuscole e senza accenti. Sequenze di 4 parole che contengono almeno una parola piena fanno da àncora. Da lì la corrispondenza esatta si estende in entrambe le direzioni, e i tratti separati da poche parole cambiate vengono uniti. Un passaggio conta se ha almeno *N* parole uguali alla fonte: è un'impostazione, e il valore predefinito è 6.
 
 **Parafrasi.** Ogni frase viene confrontata con le frasi delle fonti usando le radici delle parole piene. La frase viene segnalata se condivide almeno 4 parole chiave con una frase della fonte e se queste coprono almeno il 60% del suo contenuto.
+
+**Wikipedia.** Dal testo vengono scelte fino a 20 sequenze di 6 parole consecutive, al massimo una per frase, distribuite dall'inizio alla fine e preferendo le parole meno comuni; citazioni e bibliografia restano escluse. Le sequenze vengono cercate come frasi esatte con il motore di ricerca di Wikipedia (CirrusSearch), unite con OR in ricerche di al massimo 280 caratteri. Una ricerca in più usa le 3 parole chiave più frequenti, per trovare la voce sull'argomento anche quando il testo è riformulato. Le voci trovate vengono ordinate per numero di ricerche in cui compaiono; le prime 4, o 5 per i testi oltre le 2000 parole, vengono scaricate in testo semplice (estensione TextExtracts) e confrontate con lo stesso motore usato per le altre fonti. Diventano fonti solo le voci con almeno un passaggio copiato o una possibile parafrasi.
+
+Le richieste partono una alla volta, a distanza di almeno 300 ms e al massimo 9 ogni 61 secondi, perché Wikimedia limita le richieste anonime: le [regole in vigore dal 2026](https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits) indicano circa 10 al minuto per indirizzo IP. Il conteggio è condiviso tra le schede aperte. Se Wikipedia risponde con il codice 429, la ricerca si ferma, tiene quanto già trovato e rispetta la pausa indicata.
 
 **Segnali AI.** L'indice è la media pesata di otto misure, ridotta se compaiono imperfezioni tipiche della scrittura a mano. Pesi e soglie sono in `analyzeAI`, nel file `js/engine.js`.
 
@@ -83,8 +92,10 @@ Le fasce sono tre: da 0 a 34 pochi segnali, da 35 a 59 segnali misti, da 60 a 10
 
 La parte più debole è la taratura dell'indice AI, ed è anche il contributo più utile. Servono testi di cui si conosce con certezza l'origine: scritti da persone prima del 2022, oppure generati con un modello noto. Per usarli serve il permesso degli autori. I testi si aggiungono in `tests/campioni.js`, con il valore atteso in `tests/run.js`.
 
-Sono utili anche liste di formule per altre lingue e il supporto a nuovi formati di file.
+Sono utili anche liste di formule per altre lingue, il supporto a nuovi formati di file e ad altre edizioni linguistiche di Wikipedia.
 
 ## Licenza
 
 Il codice è distribuito con licenza MIT: vedi `LICENSE`. Per i componenti di terze parti vedi `THIRD-PARTY-NOTICES.md`.
+
+I testi delle voci di Wikipedia scaricati durante la ricerca sono distribuiti con licenza CC BY-SA 4.0. Restano nel browser di chi usa lo strumento; il rapporto indica la voce e il link alla versione confrontata.

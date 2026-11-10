@@ -52,11 +52,29 @@ expect('narrativa: trattini di dialogo esclusi', r.narrativa_dialoghi.signals.fi
 expect('tracce di chatbot riconosciute', r.chatbot_incollato.residue.filter(x => x.strong).reduce((a, x) => a + x.n, 0) >= 3);
 expect('sotto 150 parole nessun indice', MR.analyzeAI('Testo breve di prova con poche parole.').index === null);
 
+console.log('Ricerche per Wikipedia (costruzione delle ricerche)');
+const wq = MR.wikiQueries(EX_DOC, opts);
+expect('esempio: frasi da cercare', wq.phrases.length >= 8 && wq.phrases.length <= 20, wq.phrases.length);
+expect('ogni frase ha 6 parole', wq.phrases.every(p => p.q.split(/[ ']/).length === 6), wq.phrases.map(p => p.q).join(' | ').slice(0, 120));
+expect('ricerche entro 280 caratteri e 290 byte', wq.groups.every(g => g.length <= 280 && Buffer.byteLength(g) <= 290), wq.groups.map(g => g.length).join(', '));
+expect('ricerche fatte di frasi esatte unite da OR', wq.groups.every(g => /^"[^"]+"(?: OR "[^"]+")*$/.test(g)));
+expect('nessun simbolo che la ricerca interpreta', wq.phrases.every(p => !/[*?~\\:()\-"+!.,;«»]/.test(p.q)));
+expect('i numeri decimali non vengono spezzati', !wq.phrases.some(p => /\b4 1\b/.test(p.q)));
+expect('ricerca per argomento ricavata dal testo', /calore/.test(wq.topic) && wq.topic.split(' ').length === 3, wq.topic);
+const wqq = MR.wikiQueries('Come scrive la dispensa, «il fenomeno dipende soprattutto dai materiali da costruzione: asfalto, cemento e coperture scure» e lo confermano le misure fatte in tre quartieri diversi della città.', opts);
+expect('le citazioni tra virgolette non vengono cercate', wqq.phrases.length > 0 && wqq.phrases.every(p => !/fenomeno|materiali|asfalto/.test(p.q)), wqq.phrases.map(p => p.q).join(' | '));
+const wqb = MR.wikiQueries((EX_DOC + '\n\n' + T.ai_it + '\n\n' + T.umano_accademico + '\n\n').repeat(40), opts);
+expect('testo lungo: al massimo 20 frasi senza ripetizioni', wqb.phrases.length <= 20 && new Set(wqb.phrases.map(p => p.q)).size === wqb.phrases.length, wqb.phrases.length + ' frasi, ' + wqb.groups.length + ' ricerche');
+expect('lingua riconosciuta', MR.detectLang(T.ai_en) === 'en' && MR.detectLang(T.umano_en) === 'en' && MR.detectLang(T.ai_it) === 'it' && MR.detectLang(EX_DOC) === 'it');
+
 console.log('Prestazioni');
 const big = (EX_DOC + '\n\n').repeat(120);
 const bigSrc = [{ id: 1, name: 'grande', text: (EX_SOURCES[0].text + '\n\n' + T.ai_it + '\n\n').repeat(150) }];
 const t0 = Date.now(); const rb = MR.analyzePlagiarism(big, bigSrc, opts); const t1 = Date.now(); MR.analyzeAI(big); const t2 = Date.now();
 expect('40.000 parole contro 70.000 in meno di 3 secondi', t2 - t0 < 3000, (t1 - t0) + ' ms antiplagio, ' + (t2 - t1) + ' ms segnali, ' + rb.bodyWords + ' parole');
 
-console.log(failed ? '\n' + failed + ' test falliti' : '\nTutti i test superati');
-process.exit(failed ? 1 : 0);
+console.log('Client per Wikipedia (orologio simulato, nessuna richiesta di rete)');
+require('./wiki-test.js')(expect).catch(e => { console.error(e); failed++; }).then(() => {
+  console.log(failed ? '\n' + failed + ' test falliti' : '\nTutti i test superati');
+  process.exit(failed ? 1 : 0);
+});

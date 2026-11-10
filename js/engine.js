@@ -355,6 +355,96 @@ var MR = (function () {
     return first.concat(more);
   }
 
+  // ---------- ricerche per Wikipedia ----------
+  // Sequenze di parole consecutive, dentro una frase e fuori dalle parti escluse, da cercare come frase esatta.
+  // Più frasi vanno in una stessa ricerca, unite da OR, entro il limite di CirrusSearch (300 caratteri).
+  function detectLang(input) {
+    const toks = typeof input === 'string' ? tokenize(input) : input;
+    let itc = 0, enc = 0;
+    for (const t of toks) { if (IT_FN.has(t.w)) itc++; else if (EN_FN.has(t.w)) enc++; }
+    return enc > itc * 1.2 ? 'en' : 'it';
+  }
+  function utf8len(s) { let n = 0; for (const ch of s) { const c = ch.codePointAt(0); n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; } return n; }
+  const GAP_PLAIN = /^[\s,;:()\[\]«»"“”„–—]+$/;   // separatori che la ricerca ignora
+  const GAP_APOS = /^['’ʼ]$/;
+  function wikiQueries(input, opts) {
+    opts = opts || {};
+    const doc = typeof input === 'string' ? prepDoc(input, opts) : input;
+    const { toks, text, excl } = doc, n = toks.length;
+    const W = opts.words || 6, maxLen = opts.maxLen || 280, maxBytes = opts.maxBytes || 290;
+    const maxPhrases = opts.maxPhrases || Math.max(8, Math.min(20, Math.round(doc.bodyWords / 60)));
+    // giunzione con la parola precedente: 1 spazio, 2 apostrofo, 0 non cercabile (trattini, punti, numeri come 4,1)
+    const join = new Uint8Array(n);
+    for (let t = 1; t < n; t++) {
+      const g = text.slice(toks[t - 1].e, toks[t].s);
+      if (GAP_APOS.test(g)) join[t] = 2;
+      else if (GAP_PLAIN.test(g) && (/\s/.test(g) || !(/^\d+$/.test(toks[t - 1].w) && /^\d+$/.test(toks[t].w)))) join[t] = 1;
+    }
+    const weight = (t, first) => {
+      const tk = toks[t], raw = text.slice(tk.s, tk.e);
+      if (STOP.has(tk.w)) return 0.15;
+      let v = /\d/.test(raw) ? 1.1 : raw.length >= 9 ? 1.3 : raw.length >= 6 ? 1 : 0.6;
+      if (t > first && /^\p{Lu}/u.test(raw)) v += 0.3;
+      return v;
+    };
+    const cands = [];
+    for (const s of doc.sents) {
+      if (s.te - s.ti < W) continue;
+      let best = null;
+      for (let a = s.ti; a + W <= s.te; a++) {
+        let ok = true, sc = 0, content = 0;
+        for (let t = a; t < a + W; t++) {
+          if (excl[t] || (t > a && !join[t])) { ok = false; break; }
+          sc += weight(t, s.ti);
+          if (isContent(toks[t].w)) content++;
+        }
+        if (ok && content >= 3 && (!best || sc > best.sc)) best = { ti: a, te: a + W, sc };
+      }
+      if (best) cands.push(best);
+    }
+    const phraseOf = (c) => {
+      let q = '';
+      for (let t = c.ti; t < c.te; t++) { if (t > c.ti) q += join[t] === 2 ? "'" : ' '; q += text.slice(toks[t].s, toks[t].e); }
+      return q.normalize('NFC');
+    };
+    // prima la frase migliore di ogni tratto del testo, poi le migliori rimaste
+    const used = new Set(), seen = new Set(), pick = [];
+    const take = (c) => { used.add(c); c.q = phraseOf(c); const key = c.q.toLowerCase(); if (seen.has(key) || c.q.length + 2 > maxLen) return; seen.add(key); pick.push(c); };
+    const segs = Math.min(maxPhrases, cands.length);
+    for (let g = 0; g < segs; g++) {
+      const lo = g * n / segs, hi = (g + 1) * n / segs; let b = null;
+      for (const c of cands) if (!used.has(c) && c.ti >= lo && c.ti < hi && (!b || c.sc > b.sc)) b = c;
+      if (b) take(b);
+    }
+    for (const c of cands.filter(x => !used.has(x)).sort((a, b) => b.sc - a.sc)) { if (pick.length >= maxPhrases) break; take(c); }
+    pick.sort((a, b) => a.ti - b.ti);
+    const phrases = pick.slice(0, maxPhrases).map(c => ({ ti: c.ti, te: c.te, q: c.q }));
+    const groups = [];
+    let cur = [];
+    const build = (arr) => arr.map(p => '"' + p.q + '"').join(' OR ');
+    for (const p of phrases) {
+      const q = build(cur.concat(p));
+      if (cur.length && (q.length > maxLen || utf8len(q) > maxBytes)) { groups.push(build(cur)); cur = [p]; } else cur.push(p);
+    }
+    if (cur.length) groups.push(build(cur));
+    // ricerca per argomento: le parole piene più frequenti (quelle di un titolo iniziale contano di più)
+    const freq = new Map(), first = doc.sents[0], titled = first && first.te - first.ti <= 12;
+    for (let t = 0; t < n; t++) {
+      if (excl[t]) continue;
+      const w = toks[t].w;
+      if (w.length < 4 || !isContent(w) || /\d/.test(w)) continue;
+      const st = stem(w);
+      let r = freq.get(st);
+      if (!r) freq.set(st, r = { n: 0, forms: new Map(), at: t });
+      r.n += titled && t >= first.ti && t < first.te ? 3 : 1;
+      const f = text.slice(toks[t].s, toks[t].e).toLowerCase().normalize('NFC');
+      r.forms.set(f, (r.forms.get(f) || 0) + 1);
+    }
+    const top = Array.from(freq.values()).filter(r => r.n >= 2).sort((a, b) => b.n - a.n || a.at - b.at).slice(0, 3)
+      .map(r => Array.from(r.forms.entries()).sort((a, b) => b[1] - a[1])[0][0]);
+    return { phrases, groups, topic: top.length >= 2 ? top.join(' ') : '', lang: detectLang(toks) };
+  }
+
   // ---------- confronto parola per parola ----------
   function lcsMask(a, b) {
     const n = a.length, m = b.length, W = m + 1, dp = new Uint16Array((n + 1) * W);
@@ -478,9 +568,7 @@ var MR = (function () {
     const toks = tokenize(text), words = toks.length;
     const sents = attachTokens(splitSentences(text), toks);
     const F = foldWithMap(text);
-    let itc = 0, enc = 0;
-    for (const t of toks) { if (IT_FN.has(t.w)) itc++; else if (EN_FN.has(t.w)) enc++; }
-    const lang = enc > itc * 1.2 ? 'en' : 'it';
+    const lang = detectLang(toks);
     const SX = sents.map(s => ({ s: s.s, e: s.e, n: s.te - s.ti, marks: [], mkPts: 0, conn: false, dash: 0, contrast: false, trip: 0, residue: false, spec: false, prose: false }));
     const starts = SX.map(s => s.s);
     const sentAt = (off) => { let lo = 0, hi = starts.length - 1, r = -1; while (lo <= hi) { const mid = (lo + hi) >> 1; if (starts[mid] <= off) { r = mid; lo = mid + 1; } else hi = mid - 1; } return r >= 0 && off < SX[r].e ? r : -1; };
@@ -630,7 +718,7 @@ var MR = (function () {
     return { lang, words, nSent: SX.length, nProse: prose.length, mean, base, h, hRate, human, index, indexNoHuman, band, qty, signals: S, residue, dialogue, sentences: SX };
   }
 
-  return { foldWord, tokenize, countWords, tokAt, stem, isContent, splitSentences, prepText, analyzePlagiarism, fingerprints, lcsMask, analyzeAI };
+  return { foldWord, tokenize, countWords, tokAt, stem, isContent, splitSentences, prepText, analyzePlagiarism, fingerprints, wikiQueries, detectLang, lcsMask, analyzeAI };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = MR;
