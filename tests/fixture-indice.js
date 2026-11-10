@@ -22,7 +22,7 @@ for (let i = 0; i < 40; i++) PAGINE.push({ url: 'https://www.skuola.net/varie/pa
 const out = process.argv[2];
 const R = new Raccolta(1024), cache = new Map();
 PAGINE.forEach((p, d) => R.addDoc(X.fingerprints(MR.tokenize(p.text + '\n' + PIEDE), { cache }), d));
-const m = scriviIndice(out, PAGINE, R, { archivio: 'CC-MAIN-2026-43', archivioData: '2026-10', docShard: 10, maxFileBytes: 4000, siti: [{ dominio: 'skuola.net', documenti: 41 }, { dominio: 'treccani.it', documenti: 1 }] });
+const m = scriviIndice(out, PAGINE, R, { archivio: 'CC-MAIN-2023-06..CC-MAIN-2026-43', archivioData: '2026-10', archivioDal: '2023-01', docShard: 10, bits: 6, siti: [{ dominio: 'skuola.net', documenti: 41 }, { dominio: 'treccani.it', documenti: 1 }] });
 const testo = 'Per la ricerca di storia ho letto diversi libri e appunti della professoressa, poi ho scritto questa sintesi con parole mie dove possibile.\n\n' +
   COPIATO + '\n\nSecondo me la parte più interessante è il passaggio dalla monarchia assoluta alla monarchia costituzionale, che ho approfondito con un libro trovato in biblioteca.\n\n' + PIEDE;
-console.log(JSON.stringify({ testo, files: m.files.length, voci: m.voci, scartate: m.scartate }));
+console.log(JSON.stringify({ testo, files: m.files, voci: m.voci, scartate: m.scartate }));

@@ -31,13 +31,13 @@ Da leggere prima di usarlo.
 - **Nessun server.** L'analisi è JavaScript eseguito nel browser.
 - **Richieste esterne solo su richiesta.** Librerie e font sono ospitati insieme alla pagina. La Content Security Policy permette al browser di contattare soltanto `it.wikipedia.org` ed `en.wikipedia.org`, usati dalla ricerca su Wikipedia. Si può verificare negli strumenti per sviluppatori, alla scheda Rete.
 - **Cosa riceve Wikipedia.** Solo dopo il clic su «Cerca su Wikipedia»: fino a 20 frasi di 6 parole e 3 parole chiave, più le richieste per leggere le voci trovate. Il testo intero non viene inviato. Le richieste sono anonime, senza cookie né intestazioni aggiunte; Wikimedia vede comunque l'indirizzo IP, come per qualsiasi visita a Wikipedia.
-- **Ricerca nei siti di studio.** Il browser scarica dal sito stesso solo i pezzi dell'indice che gli servono, scelti in base alle impronte; il testo non viene inviato.
+- **Ricerca nei siti di studio.** Il browser scarica dal sito stesso solo i file dell'indice che gli servono, scelti in base alle impronte; il testo non viene inviato.
 - **Nessun cookie e nessuna statistica.** Le impostazioni e il conteggio delle richieste a Wikipedia restano nel `localStorage` del browser.
 - **Ricerca web manuale.** I pulsanti aprono il motore di ricerca scelto con la frase indicata.
 
 ## Usarlo in locale
 
-Scarica la cartella e apri `index.html` con un browser recente: Chrome, Edge, Firefox o Safari. Funziona anche senza connessione, tranne la ricerca su Wikipedia.
+Scarica la cartella e apri `index.html` con un browser recente: Chrome, Edge, Firefox o Safari. Funziona anche senza connessione, tranne la ricerca su Wikipedia. La ricerca nei siti di studio ha bisogno di un server, anche locale: per esempio `python3 -m http.server` nella cartella, poi `http://localhost:8000`.
 
 Aperto da file locale, PDF.js lavora senza worker, quindi i PDF molto lunghi richiedono qualche secondo in più.
 
@@ -82,7 +82,7 @@ Le richieste partono una alla volta, a distanza di almeno 300 ms e al massimo 9 
 
 **Siti di studio.** Le pagine vengono lette dall'archivio pubblico [Common Crawl](https://commoncrawl.org/), che le ha raccolte rispettando i robots.txt; vengono scartati anche gli indirizzi che il robots.txt attuale del sito esclude per il suo crawler (CCBot), e i siti che lo escludono del tutto non vengono indicizzati. Da ogni pagina si estrae il testo principale, senza menu e piè di pagina. Il testo viene diviso in sequenze di 5 parole; tra queste si scelgono le impronte con il metodo *winnowing* (Schleimer, Wilkerson e Aiken, 2003, lo stesso del sistema antiplagio MOSS): in ogni finestra di 24 sequenze consecutive si tiene quella con l'hash minore. Così ogni passaggio identico di almeno 28 parole condivide sicuramente almeno un'impronta, e l'indice resta piccolo: circa 8 impronte ogni 100 parole. Le sequenze con meno di due parole piene non diventano impronte, e quelle presenti in più di 8 pagine vengono scartate perché sono menu, formule ricorrenti o testi ripetuti.
 
-L'indice conserva solo impronte numeriche, indirizzi e titoli: nessun testo delle pagine. È fatto di file statici: i conteggi per gruppo di impronte (`dir.bin`), le voci di 7 byte ordinate (`fp-NN.bin`) e i titoli delle pagine (`documenti/`). Il browser calcola le impronte del testo con lo stesso codice usato per costruire l'indice (`js/impronte.js`) e legge solo i pezzi che gli servono con richieste parziali (HTTP Range). Una pagina viene proposta come fonte se condivide almeno due impronte vicine con il testo; i passaggi segnati vanno dalla prima all'ultima impronta in comune, quindi la parte copiata può essere un po' più ampia.
+L'indice conserva solo impronte numeriche, indirizzi e titoli: nessun testo delle pagine. È fatto di file statici: un file di pochi KB per ogni gruppo di impronte (`fp/`), con voci di 7 byte ordinate, e i titoli delle pagine (`documenti/`). Il browser calcola le impronte del testo con lo stesso codice usato per costruire l'indice (`js/impronte.js`) e scarica interi solo i file dei gruppi che gli servono. Non usa richieste parziali (HTTP Range): con la compressione che GitHub Pages applica ai file, Firefox le riceve sbagliate. Una pagina viene proposta come fonte se condivide almeno due impronte vicine con il testo; i passaggi segnati vanno dalla prima all'ultima impronta in comune, quindi la parte copiata può essere un po' più ampia.
 
 L'indice si ricostruisce con il workflow *Costruzione dell'indice di impronte*, che legge l'elenco dei siti e l'archivio da `tools/indice/siti.json`. Chi gestisce un sito presente nell'indice e vuole esserne escluso può aprire una issue: il sito viene tolto alla ricostruzione successiva.
 

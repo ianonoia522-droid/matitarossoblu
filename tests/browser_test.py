@@ -82,13 +82,7 @@ def idx_route(route):
     f = FIX / 'indice' / rel
     if ix['missing'] or not f.exists():
         return route.fulfill(status=404, body='non trovato')
-    data = f.read_bytes()
-    rg = req.headers.get('range')
-    if rg:
-        m = re.match(r'bytes=(\d+)-(\d+)$', rg)
-        a, z = int(m[1]), int(m[2])
-        return route.fulfill(status=206, headers={'Content-Range': 'bytes %d-%d/%d' % (a, z, len(data)), 'Content-Type': 'application/octet-stream'}, body=data[a:z + 1])
-    route.fulfill(status=200, headers={'Content-Type': 'application/json' if f.suffix == '.json' else 'application/octet-stream'}, body=data)
+    route.fulfill(status=200, headers={'Content-Type': 'application/json' if f.suffix == '.json' else 'application/octet-stream'}, body=f.read_bytes())
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -271,7 +265,7 @@ with sync_playwright() as pw:
             check(mode, 'indice: da file locale spiega che serve il sito pubblicato', 'sito pubblicato' in msg and not ix['log'], msg[:120])
         else:
             check(mode, 'indice: pagina copiata trovata e aggiunta alle fonti', 'Corrispondenze in 1 pagina' in msg and 'skuola.net · Rivoluzione francese: riassunto' in msg, msg[:200])
-            check(mode, 'indice: descrizione dell\'indice nel messaggio', "42 pagine di skuola.net, treccani.it, dall'archivio Common Crawl di ottobre 2026" in msg, msg[-160:])
+            check(mode, 'indice: descrizione dell\'indice nel messaggio', "42 pagine di skuola.net, treccani.it, dall'archivio Common Crawl, raccolte da gennaio 2023 a ottobre 2026" in msg, msg[-170:])
             lk = pg.locator('#srcList a.nm')
             check(mode, 'indice: la fonte è un link alla pagina', lk.count() == 1 and lk.get_attribute('href') == 'https://www.skuola.net/storia/rivoluzione-francese-riassunto.html')
             expect(pg.locator('#runStatus')).to_have_text(re.compile(r'completata|Errore'), timeout=15000)
@@ -279,8 +273,8 @@ with sync_playwright() as pw:
             pg.click('#plist .pitem .phead')
             note = pg.inner_text('#plist .cmp-note') if pg.locator('#plist .cmp-note').count() else ''
             check(mode, 'indice: il confronto spiega che il testo della pagina non è conservato', 'non conserva il testo delle pagine' in note and pg.locator('#plist .cmp-t').count() == 1, note[:120])
-            rng_n = sum(1 for r in ix['log'] if r['range'])
-            check(mode, 'indice: letto a pezzi con richieste parziali', rng_n >= 1 and all(r['range'] is None for r in ix['log'] if r['url'].split('?')[0].endswith(('.json', 'dir.bin'))), str(rng_n) + ' parziali su ' + str(len(ix['log'])))
+            fp_n = sum(1 for r in ix['log'] if '/fp/' in r['url'])
+            check(mode, 'indice: scaricati solo i file che servono, senza richieste parziali', 1 <= fp_n < 64 and not any(r['range'] for r in ix['log']), str(fp_n) + ' file di impronte su 64')
             # indice assente
             ix.update(missing=True)
             pg.reload(); expect(pg.locator('#tabSrcNum')).not_to_have_text('–', timeout=10000)

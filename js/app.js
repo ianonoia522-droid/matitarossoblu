@@ -366,7 +366,6 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     switch (e && e.kind) {
       case 'missing': return 'L\'indice dei siti di studio non è disponibile su questo sito.';
       case 'network': return 'Non riesco a leggere l\'indice: controlla la connessione e riprova.';
-      case 'range': return 'Il server che ospita la pagina non permette di leggere l\'indice a pezzi (richieste parziali).';
       case 'format': return 'L\'indice ha un formato che questa versione della pagina non riconosce: ricarica la pagina.';
       case 'http': return 'Il server ha risposto con un errore (codice ' + e.detail + ') mentre leggevo l\'indice.';
       default: return 'Errore imprevisto durante la ricerca nell\'indice: ' + (e && e.message ? e.message : e) + '.';
