@@ -1,8 +1,26 @@
 {
-  "archivio": "CC-MAIN-2026-43",
+  "nota": "Solo siti il cui robots.txt attuale ammette CCBot. Esclusi: studenti.it, focus.it, youmath.it (escludono CCBot); skuola.net (quasi assente in Common Crawl).",
+  "archivi": [
+    "CC-MAIN-2026-43", "CC-MAIN-2026-21", "CC-MAIN-2026-08", "CC-MAIN-2025-43", "CC-MAIN-2025-26", "CC-MAIN-2025-13",
+    "CC-MAIN-2024-51", "CC-MAIN-2024-42", "CC-MAIN-2024-26", "CC-MAIN-2024-10", "CC-MAIN-2023-50", "CC-MAIN-2023-40",
+    "CC-MAIN-2023-23", "CC-MAIN-2023-06"
+  ],
   "data": "2026-10",
+  "dal": "2023-01",
   "siti": [
-    { "dominio": "skuola.net", "modo": "domain", "max": 80000, "filtro": "" },
-    { "dominio": "treccani.it", "modo": "domain", "max": 80000, "filtro": "/enciclopedia/" }
+    { "dominio": "biografieonline.it", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "sapere.it", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "studentville.it", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "treccani.it", "modo": "domain", "max": 60000, "filtro": "^(?!.*/(vocabolario|sinonimi_e_contrari)/)" },
+    { "dominio": "atuttascuola.it", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "homolaicus.com", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "studiarapido.it", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "edscuola.it", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "geopop.it", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "weschool.com", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "storiaxxisecolo.it", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "raiscuola.rai.it", "modo": "host", "max": 60000, "filtro": "" },
+    { "dominio": "chimica-online.it", "modo": "domain", "max": 60000, "filtro": "" },
+    { "dominio": "tesionline.it", "modo": "domain", "max": 60000, "filtro": "" }
   ]
 }

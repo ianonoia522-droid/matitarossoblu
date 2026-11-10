@@ -3,7 +3,10 @@
 È il metodo che Common Crawl consiglia per estrarre un dominio intero: DuckDB legge solo i metadati dei file e le
 parti ordinate (url_surtkey) che contengono il sito, con richieste parziali. Non usa il server CDX.
 
-  python3 elenca_colonne.py CC-MAIN-2026-43 skuola.net domain grezzo-skuola.net.jsonl
+  python3 elenca_colonne.py CC-MAIN-2026-43[,CC-MAIN-2025-51,...] skuola.net domain grezzo-skuola.net.jsonl
+
+Con più archivi separati da virgole, le righe di tutti finiscono nello stesso file: costruisci.js tiene per ogni
+indirizzo la cattura più recente.
 
 Scrive righe nello stesso formato del server CDX (url, filename, offset, length, status, mime-detected,
 languages, timestamp), che costruisci.js filtra (lingua, robots.txt, doppioni).
@@ -37,7 +40,7 @@ def surt_range(name, mode):
 def query(files, name, mode):
     lo, hi = surt_range(name, mode)
     con = duckdb.connect()
-    settings = ["SET threads = 8"]
+    settings = ["SET threads = 4"]
     if any(f.startswith('http') for f in files):
         con.execute("INSTALL httpfs; LOAD httpfs;")
         settings += ["SET http_retries = 12", "SET http_retry_wait_ms = 2000", "SET http_retry_backoff = 2",
@@ -57,16 +60,29 @@ def query(files, name, mode):
 
 
 def main():
-    crawl, name, mode, out = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-    t0 = time.time()
-    files = paths(crawl) if not crawl.startswith('/') else [crawl]   # un percorso locale serve per i test
-    print(name, ':', len(files), 'file Parquet', file=sys.stderr)
-    rows = query(files, name, mode)
+    crawls, name, mode, out = sys.argv[1].split(','), sys.argv[2], sys.argv[3], sys.argv[4]
+    total = 0
     with open(out, 'w', encoding='utf-8') as f:
-        for url, fn, off, ln, st, mime, langs, ts in rows:
-            f.write(json.dumps({'url': url, 'filename': fn, 'offset': str(off), 'length': str(ln), 'status': str(st),
-                                'mime-detected': mime or '', 'languages': langs or '', 'timestamp': ts or ''}) + '\n')
-    print(name, ':', len(rows), 'righe in', int(time.time() - t0), 's', file=sys.stderr)
+        for crawl in crawls:
+            t0 = time.time()
+            files = paths(crawl) if not crawl.startswith('/') else [crawl]   # un percorso locale serve per i test
+            rows = None
+            for attempt in range(4):   # Common Crawl rallenta chi fa troppe richieste: si aspetta e si riprova
+                try:
+                    rows = query(files, name, mode)
+                    break
+                except Exception as e:
+                    print(name, crawl, 'tentativo', attempt + 1, str(e).splitlines()[0][:160], file=sys.stderr)
+                    time.sleep(60 * (attempt + 1))
+            if rows is None:
+                print(name, crawl, ': archivio saltato', file=sys.stderr)
+                continue
+            for url, fn, off, ln, st, mime, langs, ts in rows:
+                f.write(json.dumps({'url': url, 'filename': fn, 'offset': str(off), 'length': str(ln), 'status': str(st),
+                                    'mime-detected': mime or '', 'languages': langs or '', 'timestamp': ts or ''}) + '\n')
+            total += len(rows)
+            print(name, crawl, ':', len(files), 'file Parquet,', len(rows), 'righe in', int(time.time() - t0), 's', file=sys.stderr)
+    print(name, ': in totale', total, 'righe', file=sys.stderr)
 
 
 if __name__ == '__main__':

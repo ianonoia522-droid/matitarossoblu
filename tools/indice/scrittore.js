@@ -86,7 +86,7 @@ function scriviIndice(out, documenti, R, opts) {
   const versione = opts.versione || new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
   const meta = {
     formato: 1, versione, k: opts.k || MRIndex.K, w: opts.w || MRIndex.W, bits, dir: 'dir.bin', files, docShard,
-    documenti: documenti.length, voci: total, dfMax, scartate: dropped, archivio: opts.archivio || '', archivioData: opts.archivioData || '', costruito: new Date().toISOString(),
+    documenti: documenti.length, voci: total, dfMax, scartate: dropped, archivio: opts.archivio || '', archivioData: opts.archivioData || '', archivioDal: opts.archivioDal || '', costruito: new Date().toISOString(),
     siti: opts.siti || [],
   };
   fs.writeFileSync(path.join(out, 'meta.json'), JSON.stringify(meta, null, 1));
