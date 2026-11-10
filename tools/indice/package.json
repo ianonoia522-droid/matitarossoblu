@@ -1,0 +1,11 @@
+{
+  "name": "matitarossoblu-indice",
+  "private": true,
+  "description": "Costruzione dell'indice di impronte di Matita Rossoblù a partire da Common Crawl",
+  "license": "MIT",
+  "dependencies": {
+    "@mozilla/readability": "0.6.0",
+    "linkedom": "0.18.13",
+    "robots-parser": "3.0.1"
+  }
+}

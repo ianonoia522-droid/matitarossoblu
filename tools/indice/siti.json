@@ -1,0 +1,8 @@
+{
+  "archivio": "CC-MAIN-2026-43",
+  "data": "2026-10",
+  "siti": [
+    { "dominio": "skuola.net", "modo": "domain", "max": 80000, "filtro": "" },
+    { "dominio": "treccani.it", "modo": "domain", "max": 80000, "filtro": "/enciclopedia/" }
+  ]
+}

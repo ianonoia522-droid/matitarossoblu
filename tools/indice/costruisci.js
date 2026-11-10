@@ -1,0 +1,208 @@
+#!/usr/bin/env node
+// Costruzione dell'indice di impronte di Matita Rossoblù da Common Crawl (Node 20+).
+//
+//   node costruisci.js elenca  --archivio CC-MAIN-2026-43 --dominio skuola.net [--modo domain|host] --lavoro DIR
+//   node costruisci.js scarica --dominio skuola.net --lavoro DIR [--parte 0/4] [--max 100000] [--concorrenza 8]
+//   node costruisci.js unisci  --lavoro DIR --uscita indice/ --archivio CC-MAIN-2026-43
+//
+// Regole: si usano solo pagine già raccolte da Common Crawl (che rispetta robots.txt), si scartano gli indirizzi
+// esclusi dal robots.txt attuale del sito per CCBot, e dell'indice fanno parte solo impronte, indirizzi e titoli.
+// Il testo delle pagine resta in memoria il tempo di calcolare le impronte e non viene salvato.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib');
+const crypto = require('crypto');
+const MR = require('../../js/engine.js');
+const X = require('../../js/impronte.js');
+const { Raccolta, scriviIndice } = require('./scrittore.js');
+
+const UA = 'MatitaRossoblu-indice/0.1 (+https://github.com/ianonoia522-droid/matitarossoblu)';
+const args = (() => { const a = {}, v = process.argv.slice(3); for (let i = 0; i < v.length; i++) if (v[i].startsWith('--')) a[v[i].slice(2)] = v[i + 1] && !v[i + 1].startsWith('--') ? v[++i] : true; return a; })();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const log = (...m) => console.error(new Date().toISOString().slice(11, 19), ...m);
+
+async function fetchRetry(url, init, tries) {
+  let delay = 2000;
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetch(url, Object.assign({ headers: { 'User-Agent': UA } }, init || {}, { headers: Object.assign({ 'User-Agent': UA }, (init && init.headers) || {}) }));
+      if ([429, 500, 502, 503, 504].includes(res.status) && i < (tries || 6)) { await res.arrayBuffer().catch(() => {}); await sleep(delay); delay = Math.min(delay * 2, 120000); continue; }
+      return res;
+    } catch (e) {
+      if (i >= (tries || 6)) throw e;
+      await sleep(delay); delay = Math.min(delay * 2, 120000);
+    }
+  }
+}
+
+// ---------- elenco delle pagine dall'indice CDX di Common Crawl ----------
+async function elenca() {
+  const archivio = args.archivio, dom = args.dominio, modo = args.modo || 'domain', dir = args.lavoro;
+  fs.mkdirSync(dir, { recursive: true });
+  const base = 'https://index.commoncrawl.org/' + archivio + '-index?url=' + encodeURIComponent(dom) + '&matchType=' + modo;
+  const info = JSON.parse((await (await fetchRetry(base + '&showNumPages=true')).text()).trim().split('\n').pop());
+  const pages = +info.pages || 0;
+  log(dom, 'pagine CDX', pages);
+  const robots = await robotsFor(dom);
+  const filtro = typeof args.filtro === 'string' && args.filtro ? new RegExp(args.filtro) : null;
+  const best = new Map();
+  let lines = 0, kept = 0, blocked = 0;
+  for (let p = 0; p < pages; p++) {
+    const res = await fetchRetry(base + '&output=json&page=' + p);
+    if (res.status === 404) break;
+    if (!res.ok) throw new Error('CDX pagina ' + p + ': ' + res.status);
+    for (const ln of (await res.text()).split('\n')) {
+      if (!ln) continue;
+      lines++;
+      let r; try { r = JSON.parse(ln); } catch (e) { continue; }
+      const mime = r['mime-detected'] || r.mime || '';
+      if (r.status !== '200' || !/html/.test(mime) || !/ita/.test(r.languages || '')) continue;
+      if (filtro && !filtro.test(r.url)) continue;
+      if (robots && !robots.isAllowed(r.url, 'CCBot')) { blocked++; continue; }
+      const key = r.url.replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, '');
+      const prev = best.get(key);
+      if (!prev || r.timestamp > prev.timestamp) best.set(key, { url: r.url, filename: r.filename, offset: +r.offset, length: +r.length, timestamp: r.timestamp });
+      kept++;
+    }
+    if (p % 10 === 9) log(dom, 'pagina', p + 1, 'di', pages, '·', best.size, 'indirizzi');
+    await sleep(800);
+  }
+  const out = path.join(dir, 'elenco-' + dom + '.jsonl');
+  fs.writeFileSync(out, Array.from(best.values()).map(x => JSON.stringify(x)).join('\n') + '\n');
+  log(dom, 'righe', lines, '· in italiano', kept, '· escluse dal robots.txt attuale', blocked, '· indirizzi unici', best.size);
+}
+
+async function robotsFor(dom) {
+  const robotsParser = require('robots-parser');
+  for (const h of [dom.split('.').length > 2 ? dom : 'www.' + dom, dom]) {
+    try {
+      const res = await fetchRetry('https://' + h + '/robots.txt', null, 2);
+      if (res.ok) return robotsParser('https://' + h + '/robots.txt', await res.text());
+    } catch (e) { /* prova l'altro host */ }
+  }
+  return null;
+}
+
+// ---------- lettura dei record WARC ed estrazione del testo principale ----------
+function parseWarc(buf) {
+  const raw = zlib.gunzipSync(buf);
+  const a = raw.indexOf('\r\n\r\n');
+  const b = raw.indexOf('\r\n\r\n', a + 4);
+  if (a < 0 || b < 0) return null;
+  const http = raw.subarray(a + 4, b).toString('latin1');
+  return { http, body: raw.subarray(b + 4) };
+}
+function decode(body, http) {
+  const head = body.subarray(0, 4096).toString('latin1');
+  const m = /charset=["']?([\w-]+)/i.exec(http) || /<meta[^>]+charset=["']?([\w-]+)/i.exec(head);
+  let label = m ? m[1].toLowerCase() : 'utf-8';
+  try { return new TextDecoder(label).decode(body); } catch (e) { return new TextDecoder('utf-8').decode(body); }
+}
+const BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,dd,dt,pre,td,th,figcaption';
+function blockText(doc) {
+  const out = [];
+  for (const el of doc.querySelectorAll(BLOCKS)) {
+    if (el.querySelector && el.querySelector(BLOCKS)) continue;   // solo i blocchi più interni
+    const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (t) out.push(t);
+  }
+  return out.join('\n');
+}
+function extract(html) {
+  const { parseHTML } = require('linkedom');
+  const { Readability } = require('@mozilla/readability');
+  if (html.length > 3e6) html = html.slice(0, 3e6);
+  const { document } = parseHTML(html);
+  const title = ((document.querySelector('title') || {}).textContent || '').replace(/\s+/g, ' ').trim();
+  let text = '';
+  try {
+    const art = new Readability(document, { charThreshold: 300 }).parse();
+    if (art && art.content) text = blockText(parseHTML('<!doctype html><html><body>' + art.content + '</body></html>').document);
+  } catch (e) { /* ripiego sotto */ }
+  if (MR.countWords(text) < 80) text = blockText(parseHTML(html).document);
+  return { title, text: text.normalize('NFC') };
+}
+
+async function scarica() {
+  const dom = args.dominio, dir = args.lavoro, max = +(args.max || 1e9), conc = +(args.concorrenza || 8);
+  const [pi, pn] = (args.parte || '0/1').split('/').map(Number);
+  const all = fs.readFileSync(path.join(dir, 'elenco-' + dom + '.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+  // campione casuale ma riproducibile: ordine dato dall'hash dell'indirizzo, non alfabetico
+  const h = u => parseInt(crypto.createHash('md5').update(u).digest('hex').slice(0, 8), 16);
+  const mine = all.map(r => [h(r.url), r]).filter(x => x[0] % pn === pi).sort((a, b) => a[0] - b[0]).slice(0, max).map(x => x[1]);
+  log(dom, 'parte', pi + '/' + pn, ':', mine.length, 'pagine di', all.length);
+  const tag = dom + '-' + pi;
+  const fpOut = fs.openSync(path.join(dir, 'parziale-' + tag + '.bin'), 'w');
+  const docOut = fs.openSync(path.join(dir, 'documenti-' + tag + '.jsonl'), 'w');
+  const cache = new Map(), seenText = new Set();
+  let next = 0, done = 0, ok = 0, short = 0, dup = 0, fail = 0, bytes = 0;
+  const t0 = Date.now();
+  async function one(r) {
+    const res = await fetchRetry('https://data.commoncrawl.org/' + r.filename, { headers: { Range: 'bytes=' + r.offset + '-' + (r.offset + r.length - 1) } });
+    if (res.status !== 206) { fail++; return; }
+    const buf = Buffer.from(await res.arrayBuffer());
+    bytes += buf.length;
+    const w = parseWarc(buf);
+    if (!w) { fail++; return; }
+    const { title, text } = extract(decode(w.body, w.http));
+    const toks = MR.tokenize(text);
+    if (toks.length < 80) { short++; return; }
+    const h = crypto.createHash('md5').update(toks.slice(0, 400).map(t => t.w).join(' ')).digest('hex');
+    if (seenText.has(h)) { dup++; return; }
+    seenText.add(h);
+    if (cache.size > 3e6) cache.clear();
+    const fps = X.fingerprints(toks, { cache });
+    const uniq = new Map();
+    for (const f of fps) uniq.set(f.a + ':' + f.b, f);
+    const rec = Buffer.alloc(8 + uniq.size * 8);
+    rec.writeUInt32LE(ok, 0); rec.writeUInt32LE(uniq.size, 4);
+    let o = 8;
+    for (const f of uniq.values()) { rec.writeUInt32LE(f.a, o); rec.writeUInt32LE(f.b, o + 4); o += 8; }
+    fs.writeSync(fpOut, rec);
+    fs.writeSync(docOut, JSON.stringify({ url: r.url, title: title.slice(0, 160), parole: toks.length }) + '\n');
+    ok++;
+  }
+  async function worker() {
+    for (;;) {
+      const i = next++;
+      if (i >= mine.length) return;
+      try { await one(mine[i]); } catch (e) { fail++; }
+      done++;
+      if (done % 1000 === 0) log(dom, done + '/' + mine.length, '· valide', ok, '· brevi', short, '· doppie', dup, '· errori', fail, '·', Math.round(bytes / 1e6) + ' MB', '·', Math.round(done / ((Date.now() - t0) / 1000)) + '/s');
+    }
+  }
+  await Promise.all(Array.from({ length: conc }, worker));
+  fs.closeSync(fpOut); fs.closeSync(docOut);
+  log(dom, 'fine: valide', ok, '· brevi', short, '· doppie', dup, '· errori', fail, '·', Math.round(bytes / 1e6) + ' MB in', Math.round((Date.now() - t0) / 1000) + ' s');
+}
+
+// ---------- unione delle parti e scrittura dell'indice ----------
+function unisci() {
+  const dir = args.lavoro, out = args.uscita;
+  const parts = fs.readdirSync(dir).filter(f => /^parziale-.+\.bin$/.test(f)).sort();
+  const R = new Raccolta(1 << 22), docs = [], siti = new Map();
+  for (const p of parts) {
+    const tag = p.slice('parziale-'.length, -4), dom = tag.replace(/-\d+$/, '');
+    const meta = fs.readFileSync(path.join(dir, 'documenti-' + tag + '.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+    const buf = fs.readFileSync(path.join(dir, p));
+    let o = 0;
+    while (o < buf.length) {
+      const local = buf.readUInt32LE(o), n = buf.readUInt32LE(o + 4); o += 8;
+      const id = docs.length;
+      docs.push({ url: meta[local].url, title: meta[local].title });
+      for (let i = 0; i < n; i++, o += 8) R.add(buf.readUInt32LE(o), buf.readUInt32LE(o + 4), id);
+    }
+    siti.set(dom, (siti.get(dom) || 0) + meta.length);
+    log('unite', p, '· documenti', docs.length, '· impronte', R.n);
+  }
+  const m = scriviIndice(out, docs, R, { archivio: args.archivio || '', archivioData: args.data || '', siti: Array.from(siti, ([dominio, documenti]) => ({ dominio, documenti })) });
+  log('indice:', m.documenti, 'documenti,', m.voci, 'voci,', m.scartate, 'scartate,', m.files.length, 'file,', m.bits, 'bit, secchio massimo', m.maxBucket);
+}
+
+if (require.main === module) {
+  const cmd = process.argv[2], fn = { elenca, scarica, unisci }[cmd];
+  if (!fn) { console.error('comando sconosciuto: ' + cmd + ' (elenca, scarica, unisci)'); process.exit(2); }
+  Promise.resolve().then(fn).catch(e => { console.error(e); process.exit(1); });
+}
+module.exports = { parseWarc, decode, extract, blockText, elenca, scarica, unisci, setArgs: a => Object.assign(args, a) };

@@ -75,6 +75,9 @@ expect('40.000 parole contro 70.000 in meno di 3 secondi', t2 - t0 < 3000, (t1 -
 
 console.log('Client per Wikipedia (orologio simulato, nessuna richiesta di rete)');
 require('./wiki-test.js')(expect).catch(e => { console.error(e); failed++; }).then(() => {
+  console.log('Impronte e indice dei siti di studio (file temporanei, nessuna richiesta di rete)');
+  return require('./impronte-test.js')(expect).catch(e => { console.error(e); failed++; });
+}).then(() => {
   console.log(failed ? '\n' + failed + ' test falliti' : '\nTutti i test superati');
   process.exit(failed ? 1 : 0);
 });

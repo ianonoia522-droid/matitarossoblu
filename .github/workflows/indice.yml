@@ -1,0 +1,95 @@
+name: Costruzione dell'indice di impronte
+
+# Avvio manuale, oppure con una modifica a tools/indice/siti.json.
+# Il risultato (solo impronte, indirizzi e titoli) va nel ramo "indice-build", da controllare prima della pubblicazione.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tools/indice/siti.json
+
+permissions:
+  contents: write
+
+concurrency:
+  group: indice
+  cancel-in-progress: false
+
+jobs:
+  piano:
+    runs-on: ubuntu-latest
+    outputs:
+      matrice: ${{ steps.m.outputs.matrice }}
+      archivio: ${{ steps.m.outputs.archivio }}
+      data: ${{ steps.m.outputs.data }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          c = json.load(open('tools/indice/siti.json'))
+          print('matrice=' + json.dumps({'include': c['siti']}))
+          print('archivio=' + c['archivio'])
+          print('data=' + c['data'])
+          EOF
+
+  sito:
+    needs: piano
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.piano.outputs.matrice) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+        working-directory: tools/indice
+      - name: Elenco delle pagine
+        run: node tools/indice/costruisci.js elenca --archivio ${{ needs.piano.outputs.archivio }} --dominio ${{ matrix.dominio }} --modo ${{ matrix.modo }} --filtro "${{ matrix.filtro }}" --lavoro lavoro
+      - name: Lettura delle pagine e impronte
+        run: node tools/indice/costruisci.js scarica --dominio ${{ matrix.dominio }} --lavoro lavoro --max ${{ matrix.max }} --concorrenza 8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parziale-${{ matrix.dominio }}
+          path: |
+            lavoro/parziale-*.bin
+            lavoro/documenti-*.jsonl
+          retention-days: 7
+
+  unisci:
+    needs: [piano, sito]
+    if: always() && needs.piano.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: parziale-*
+          path: lavoro
+          merge-multiple: true
+      - name: Scrittura dell'indice
+        run: |
+          ls -la lavoro
+          node tools/indice/costruisci.js unisci --lavoro lavoro --uscita uscita/indice --archivio ${{ needs.piano.outputs.archivio }} --data ${{ needs.piano.outputs.data }}
+          du -sh uscita/indice; ls -la uscita/indice | head -20
+      - name: Pubblica nel ramo "indice-build"
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd uscita
+          git init -q -b indice-build
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add indice
+          git commit -q -m "Indice di impronte ${{ needs.piano.outputs.archivio }} (run ${GITHUB_RUN_ID})"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" indice-build
