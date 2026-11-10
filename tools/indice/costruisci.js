@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Costruzione dell'indice di impronte di Matita Rossoblù da Common Crawl (Node 20+).
 //
-//   node costruisci.js elenca  --archivio CC-MAIN-2026-43 --dominio skuola.net [--modo domain|host] --lavoro DIR
-//   node costruisci.js scarica --dominio skuola.net --lavoro DIR [--parte 0/4] [--max 100000] [--concorrenza 8]
-//   node costruisci.js unisci  --lavoro DIR --uscita indice/ --archivio CC-MAIN-2026-43
+//   node costruisci.js elenca  --da grezzo.jsonl --dominio skuola.net [--filtro REGEXP] --lavoro DATI/elenchi
+//   node costruisci.js scarica --dati DATI --tag ID [--ritmo 1.5] [--minuti 300 | --fine EPOCH_MS] [--max N]
+//   node costruisci.js unisci  --dati DATI --uscita indice/ --archivio ETICHETTA --data AAAA-MM --dal AAAA-MM
 //
 // Regole: si usano solo pagine già raccolte da Common Crawl (che rispetta robots.txt), si scartano gli indirizzi
 // esclusi dal robots.txt attuale del sito per CCBot, e dell'indice fanno parte solo impronte, indirizzi e titoli.
@@ -144,104 +144,166 @@ function extract(html) {
   return { title, text: text.normalize('NFC') };
 }
 
+// ---------- lettura delle pagine: lenta, educata e riprendibile ----------
+// Legge da DATI/elenchi/elenco-*.jsonl le pagine non ancora fatte (in DATI/parti/<sito>/*.jsonl ci sono quelle lette,
+// in *-saltati.txt quelle da non riprovare), alternando i siti, al ritmo di --ritmo richieste al secondo da una sola
+// macchina e fino a --fine (millisecondi epoch) o per --minuti minuti. Se Common Crawl risponde 403, 429 o 503
+// (limite di frequenza del suo firewall) tutta la lettura si ferma 5 minuti e la pagina torna in coda; dopo 4 pause
+// di fila senza progressi la corsa finisce e salva quanto letto. Per ogni pagina si salvano solo impronte, indirizzo,
+// titolo, numero di parole e un hash del testo (per riconoscere i doppioni nelle corse successive).
 async function scarica() {
-  const dom = args.dominio, dir = args.lavoro, max = +(args.max || 1e9), conc = +(args.concorrenza || 8);
-  const [pi, pn] = (args.parte || '0/1').split('/').map(Number);
-  const all = fs.readFileSync(path.join(dir, 'elenco-' + dom + '.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
-  // campione casuale ma riproducibile: ordine dato dall'hash dell'indirizzo, non alfabetico
+  const dati = args.dati, tag = String(args.tag || Date.now()), ritmo = +(args.ritmo || 1.5), conc = +(args.concorrenza || 2);
+  const fine = args.fine ? +args.fine : Date.now() + (+(args.minuti || 300)) * 60000;
+  const pausaMs = +(args.pausa || 5 * 60000);   // pausa dopo un rifiuto per frequenza (si cambia solo nei test)
+  const elenchi = fs.readdirSync(path.join(dati, 'elenchi')).filter(f => /^elenco-.+\.jsonl$/.test(f));
   const h = u => parseInt(crypto.createHash('md5').update(u).digest('hex').slice(0, 8), 16);
-  const mine = all.map(r => [h(r.url), r]).filter(x => x[0] % pn === pi).sort((a, b) => a[0] - b[0]).slice(0, max).map(x => x[1]);
-  log(dom, 'parte', pi + '/' + pn, ':', mine.length, 'pagine di', all.length);
-  const tag = dom + '-' + pi;
-  const fpOut = fs.openSync(path.join(dir, 'parziale-' + tag + '.bin'), 'w');
-  const docOut = fs.openSync(path.join(dir, 'documenti-' + tag + '.jsonl'), 'w');
-  const campOut = fs.openSync(path.join(dir, 'campioni-' + tag + '.jsonl'), 'w');
-  const cache = new Map(), seenText = new Set();
-  let next = 0, done = 0, ok = 0, short = 0, dup = 0, fail = 0, bytes = 0;
+  const seenText = new Set(), code = [];
+  let tot = 0;
+  for (const f of elenchi) {
+    const dom = f.slice('elenco-'.length, -'.jsonl'.length);
+    const dir = path.join(dati, 'parti', dom);
+    const fatti = new Set();
+    if (fs.existsSync(dir)) for (const g of fs.readdirSync(dir)) {
+      if (/^[^-]+\.jsonl$/.test(g)) for (const ln of fs.readFileSync(path.join(dir, g), 'utf8').split('\n')) { if (!ln) continue; const d = JSON.parse(ln); fatti.add(d.url); if (d.h) seenText.add(d.h); }
+      if (/-saltati\.txt$/.test(g)) for (const u of fs.readFileSync(path.join(dir, g), 'utf8').split('\n')) if (u) fatti.add(u);
+    }
+    const max = +(args['max-' + dom] || args.max || 1e9);
+    const todo = fs.readFileSync(path.join(dati, 'elenchi', f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
+      .filter(r => !fatti.has(r.url)).map(r => [h(r.url), r]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
+    const room = Math.max(0, max - fatti.size);
+    code.push({ dom, todo: todo.slice(0, room) });
+    tot += Math.min(todo.length, room);
+    log(dom, ': già fatte', fatti.size, '· da leggere', Math.min(todo.length, room));
+  }
+  // coda unica che alterna i siti
+  const queue = [];
+  for (let i = 0; code.some(c => i < c.todo.length); i++) for (const c of code) if (i < c.todo.length) queue.push({ dom: c.dom, r: c.todo[i], tries: 0 });
+  log('in coda', queue.length, 'pagine, ritmo', ritmo, 'al secondo, fine', new Date(fine).toISOString().slice(11, 16));
+  const out = new Map();
+  const outFor = dom => {
+    let o = out.get(dom);
+    if (!o) {
+      const dir = path.join(dati, 'parti', dom); fs.mkdirSync(dir, { recursive: true });
+      o = { n: 0, fp: fs.openSync(path.join(dir, tag + '.bin'), 'a'), doc: fs.openSync(path.join(dir, tag + '.jsonl'), 'a'),
+        camp: fs.openSync(path.join(dir, tag + '-campioni.jsonl'), 'a'), salt: fs.openSync(path.join(dir, tag + '-saltati.txt'), 'a') };
+      out.set(dom, o);
+    }
+    return o;
+  };
+  const cache = new Map();
+  let next = Date.now(), pausaFino = 0, pause = 0, ok = 0, saltate = 0, short = 0, dup = 0, limiti = 0, bytes = 0, stop = false, lastOk = 0;
   const t0 = Date.now();
-  async function one(r) {
-    const res = await fetchRetry('https://data.commoncrawl.org/' + r.filename, { headers: { Range: 'bytes=' + r.offset + '-' + (r.offset + r.length - 1) } });
-    if (res.status !== 206) { fail++; return; }
+  async function turno() {
+    for (;;) {
+      const now = Date.now();
+      if (now < pausaFino) { await sleep(Math.min(pausaFino - now, 10000)); continue; }
+      const t = Math.max(now, next); next = t + 1000 / ritmo;
+      if (t > now) await sleep(t - now);
+      return;
+    }
+  }
+  const salta = (dom, url) => { saltate++; fs.writeSync(outFor(dom).salt, url + '\n'); };
+  async function one(item) {
+    const { dom, r } = item;
+    await turno();
+    let res;
+    try { res = await fetch('https://data.commoncrawl.org/' + r.filename, { headers: { 'User-Agent': UA, Range: 'bytes=' + r.offset + '-' + (r.offset + r.length - 1) } }); }
+    catch (e) { if (++item.tries < 3) queue.unshift(item); else salta(dom, r.url); return; }
+    if ([403, 429, 503].includes(res.status)) {
+      await res.arrayBuffer().catch(() => {});
+      limiti++; queue.unshift(item);
+      if (Date.now() >= pausaFino) {
+        pause = ok > lastOk ? 1 : pause + 1; lastOk = ok;
+        if (pause > 4) { stop = true; log('limite di Common Crawl: troppe pause senza progressi, mi fermo'); return; }
+        pausaFino = Date.now() + pausaMs * pause;
+        log('limite di Common Crawl (' + res.status + '): pausa di', Math.round(pausaMs * pause / 1000), 'secondi');
+      }
+      return;
+    }
+    if (res.status !== 206) { await res.arrayBuffer().catch(() => {}); salta(dom, r.url); return; }
     const buf = Buffer.from(await res.arrayBuffer());
     bytes += buf.length;
-    const w = parseWarc(buf);
-    if (!w) { fail++; return; }
+    let w; try { w = parseWarc(buf); } catch (e) { w = null; }
+    if (!w) { salta(dom, r.url); return; }
     const { title, text } = extract(decode(w.body, w.http));
     const toks = MR.tokenize(text);
-    if (toks.length < 80) { short++; return; }
-    const th = crypto.createHash('md5').update(toks.slice(0, 400).map(t => t.w).join(' ')).digest('hex');
-    if (seenText.has(th)) { dup++; return; }
+    if (toks.length < 80) { short++; salta(dom, r.url); return; }
+    const th = crypto.createHash('md5').update(toks.slice(0, 400).map(t => t.w).join(' ')).digest('hex').slice(0, 16);
+    if (seenText.has(th)) { dup++; salta(dom, r.url); return; }
     seenText.add(th);
     if (cache.size > 3e6) cache.clear();
-    const fps = X.fingerprints(toks, { cache });
     const uniq = new Map();
-    for (const f of fps) uniq.set(f.a + ':' + f.b, f);
+    for (const f of X.fingerprints(toks, { cache })) uniq.set(f.a + ':' + f.b, f);
+    const o = outFor(dom);
     const rec = Buffer.alloc(8 + uniq.size * 8);
-    rec.writeUInt32LE(ok, 0); rec.writeUInt32LE(uniq.size, 4);
-    let o = 8;
-    for (const f of uniq.values()) { rec.writeUInt32LE(f.a, o); rec.writeUInt32LE(f.b, o + 4); o += 8; }
-    fs.writeSync(fpOut, rec);
-    fs.writeSync(docOut, JSON.stringify({ url: r.url, title: title.slice(0, 160), parole: toks.length }) + '\n');
-    // verifica: per circa una pagina su 400 si conservano le impronte (non il testo) di estratti di 40 e 80 parole
+    rec.writeUInt32LE(o.n, 0); rec.writeUInt32LE(uniq.size, 4);
+    let off = 8;
+    for (const f of uniq.values()) { rec.writeUInt32LE(f.a, off); rec.writeUInt32LE(f.b, off + 4); off += 8; }
+    fs.writeSync(o.fp, rec);
+    fs.writeSync(o.doc, JSON.stringify({ url: r.url, title: title.slice(0, 160), parole: toks.length, h: th }) + '\n');
+    // verifica: per circa una pagina su 400 le impronte (non il testo) di estratti di 40 e 80 parole
     if (h(r.url) % 400 === 7 && toks.length >= 140) {
-      const start = 10 + (h(r.url + '#') % (toks.length - 100));
-      const camp = { url: r.url };
+      const start = 10 + (h(r.url + '#') % (toks.length - 100)), camp = { url: r.url };
       for (const L of [40, 80]) camp['f' + L] = X.fingerprints(toks.slice(start, start + L), { cache }).map(f => [f.a, f.b, f.pos]);
-      fs.writeSync(campOut, JSON.stringify(camp) + '\n');
+      fs.writeSync(o.camp, JSON.stringify(camp) + '\n');
     }
-    ok++;
+    o.n++; ok++;
   }
+  let done = 0;
   async function worker() {
-    for (;;) {
-      const i = next++;
-      if (i >= mine.length) return;
-      try { await one(mine[i]); } catch (e) { fail++; }
-      done++;
-      if (done % 1000 === 0) log(dom, done + '/' + mine.length, '· valide', ok, '· brevi', short, '· doppie', dup, '· errori', fail, '·', Math.round(bytes / 1e6) + ' MB', '·', Math.round(done / ((Date.now() - t0) / 1000)) + '/s');
+    while (!stop && Date.now() < fine) {
+      const item = queue.shift();
+      if (!item) return;
+      try { await one(item); } catch (e) { salta(item.dom, item.r.url); }
+      if (++done % 500 === 0) log(done + '/' + tot, '· lette', ok, '· saltate', saltate, '(brevi', short, ', doppie', dup + ')', '· limiti', limiti, '·', Math.round(bytes / 1e6) + ' MB', '·', (ok / ((Date.now() - t0) / 1000)).toFixed(2) + '/s');
     }
   }
   await Promise.all(Array.from({ length: conc }, worker));
-  fs.closeSync(fpOut); fs.closeSync(docOut); fs.closeSync(campOut);
-  log(dom, 'fine: valide', ok, '· brevi', short, '· doppie', dup, '· errori', fail, '·', Math.round(bytes / 1e6) + ' MB in', Math.round((Date.now() - t0) / 1000) + ' s');
+  for (const o of out.values()) for (const k of ['fp', 'doc', 'camp', 'salt']) fs.closeSync(o[k]);
+  log('fine: lette', ok, '· saltate', saltate, '· limiti', limiti, '· restano', queue.length, '·', Math.round(bytes / 1e6) + ' MB in', Math.round((Date.now() - t0) / 60000), 'min');
+  fs.writeFileSync(path.join(args.dati, 'ultima-corsa.json'), JSON.stringify({ tag, lette: ok, saltate, limiti, restano: queue.length, minuti: Math.round((Date.now() - t0) / 60000) }, null, 1));
 }
 
 // ---------- unione delle parti e scrittura dell'indice ----------
 async function unisci() {
-  const dir = args.lavoro, out = args.uscita;
-  const parts = fs.readdirSync(dir).filter(f => /^parziale-.+\.bin$/.test(f)).sort();
-  const R = new Raccolta(1 << 22), docs = [], siti = new Map();
-  for (const p of parts) {
-    const tag = p.slice('parziale-'.length, -4), dom = tag.replace(/-\d+$/, '');
-    const meta = fs.readFileSync(path.join(dir, 'documenti-' + tag + '.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
-    const buf = fs.readFileSync(path.join(dir, p));
-    let o = 0;
-    while (o < buf.length) {
-      const local = buf.readUInt32LE(o), n = buf.readUInt32LE(o + 4); o += 8;
-      const id = docs.length;
-      docs.push({ url: meta[local].url, title: meta[local].title });
-      for (let i = 0; i < n; i++, o += 8) R.add(buf.readUInt32LE(o), buf.readUInt32LE(o + 4), id);
+  const dati = args.dati, out = args.uscita;
+  const R = new Raccolta(1 << 22), docs = [], siti = new Map(), camp = [];
+  const base = path.join(dati, 'parti');
+  for (const dom of (fs.existsSync(base) ? fs.readdirSync(base).sort() : [])) {
+    for (const f of fs.readdirSync(path.join(base, dom)).filter(g => /^[^-]+\.bin$/.test(g)).sort()) {
+      const tag = f.slice(0, -4);
+      const meta = fs.readFileSync(path.join(base, dom, tag + '.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+      const buf = fs.readFileSync(path.join(base, dom, f));
+      let o = 0;
+      while (o + 8 <= buf.length) {
+        const local = buf.readUInt32LE(o), n = buf.readUInt32LE(o + 4); o += 8;
+        if (!meta[local] || o + n * 8 > buf.length) break;   // corsa interrotta a metà record
+        const id = docs.length;
+        docs.push({ url: meta[local].url, title: meta[local].title });
+        for (let i = 0; i < n; i++, o += 8) R.add(buf.readUInt32LE(o), buf.readUInt32LE(o + 4), id);
+        siti.set(dom, (siti.get(dom) || 0) + 1);
+      }
+      const cf = path.join(base, dom, tag + '-campioni.jsonl');
+      if (fs.existsSync(cf)) for (const ln of fs.readFileSync(cf, 'utf8').split('\n')) if (ln) camp.push(JSON.parse(ln));
     }
-    siti.set(dom, (siti.get(dom) || 0) + meta.length);
-    log('unite', p, '· documenti', docs.length, '· impronte', R.n);
+    log('unito', dom, '· documenti', docs.length, '· impronte', R.n);
   }
-  const m = scriviIndice(out, docs, R, { archivio: args.archivio || '', archivioData: args.data || '', archivioDal: typeof args.dal === 'string' ? args.dal : '', siti: Array.from(siti, ([dominio, documenti]) => ({ dominio, documenti })) });
+  const m = scriviIndice(out, docs, R, { archivio: args.archivio || '', archivioData: args.data || '', archivioDal: typeof args.dal === 'string' ? args.dal : '', siti: Array.from(siti, ([dominio, documenti]) => ({ dominio, documenti })).sort((a, b) => b.documenti - a.documenti) });
   log('indice:', m.documenti, 'documenti,', m.voci, 'voci,', m.scartate, 'scartate,', m.files, 'file di impronte (' + m.bits + ' bit), il più grande di', m.maxFile, 'byte');
   // verifica sull'indice appena scritto, con lo stesso codice di ricerca del browser
-  const camp = fs.readdirSync(dir).filter(f => /^campioni-.+\.jsonl$/.test(f)).flatMap(f => fs.readFileSync(path.join(dir, f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)));
   const idx = X.createIndex('indice/', { fetch: fileFetch(out) });
   const ver = { campioni: camp.length };
   for (const L of [40, 80]) {
     let found = 0, any = 0;
     for (const c of camp) {
-      const fps = c['f' + L].map(([a, b, pos]) => ({ a, b, pos }));
-      const { hits } = await idx.lookup(fps);
-      let ok = false, some = false;
+      const { hits } = await idx.lookup(c['f' + L].map(([a, b, pos]) => ({ a, b, pos })));
+      let okc = false, some = false;
       for (const [id, pos] of hits) {
         if (docs[id].url !== c.url) continue;
         some = true;
-        if (X.passages(pos, m.k, m.w).some(p => p.n >= 2)) ok = true;
+        if (X.passages(pos, m.k, m.w).some(p => p.n >= 2)) okc = true;
       }
-      if (ok) found++;
+      if (okc) found++;
       if (some) any++;
     }
     ver['trovati' + L] = found; ver['impronta' + L] = any;
