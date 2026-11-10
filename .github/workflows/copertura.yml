@@ -5,7 +5,8 @@ on:
   push:
     branches: [main]
     paths:
-      - tools/copertura.py
+      - tools/copertura_colonne.py
+      - tools/prova_range.py
       - .github/workflows/copertura.yml
 
 permissions:
@@ -16,22 +17,90 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  copertura:
+  archivio:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { archivio: CC-MAIN-2026-43, extra: --diagnostica }
+          - { archivio: CC-MAIN-2026-21, extra: '' }
+          - { archivio: CC-MAIN-2025-51, extra: '' }
+          - { archivio: CC-MAIN-2025-26, extra: '' }
+          - { archivio: CC-MAIN-2024-51, extra: '' }
+          - { archivio: CC-MAIN-2024-26, extra: '' }
+          - { archivio: CC-MAIN-2023-50, extra: '' }
+          - { archivio: CC-MAIN-2023-23, extra: '' }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Verifica
-        run: python tools/copertura.py | tee copertura.md
+      - run: pip install duckdb==1.5.6
+      - run: python3 tools/copertura_colonne.py ${{ matrix.archivio }} copertura-${{ matrix.archivio }}.json ${{ matrix.extra }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: copertura-${{ matrix.archivio }}
+          path: copertura-${{ matrix.archivio }}.json
+          retention-days: 3
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          pip install playwright==1.56.0
+          python3 -m playwright install --with-deps chromium firefox webkit
+      - run: python3 tools/prova_range.py | tee browser.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser
+          path: browser.md
+          retention-days: 3
+
+  rapporto:
+    needs: [archivio, browser]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dati
+          merge-multiple: true
+      - name: Rapporto
+        run: |
+          python3 - <<'EOF' > copertura.md
+          import glob, json
+          runs = sorted((json.load(open(f)) for f in glob.glob('dati/copertura-*.json')), key=lambda r: r['archivio'], reverse=True)
+          print('# Copertura dei siti di studio in Common Crawl (indice a colonne)\n')
+          print('Pagine HTML in italiano con stato 200, indirizzi unici, per archivio.\n')
+          sites = list(runs[0]['siti']) if runs else []
+          print('| sito | ' + ' | '.join(r['archivio'][8:] for r in runs) + ' | risposte non riuscite (' + (runs[0]['archivio'][8:] if runs else '') + ') |')
+          print('|---|' + '---|' * (len(runs) + 1))
+          for s in sites:
+              cells = []
+              for r in runs:
+                  x = r['siti'].get(s, {})
+                  cells.append(str(x.get('unici', 'errore: ' + x.get('errore', '?')[:40])))
+              d = runs[0]['siti'].get(s, {}).get('diagnostica', {})
+              print('| %s | %s | %s |' % (s, ' | '.join(cells), ', '.join('%s: %s' % kv for kv in d.items())))
+          print()
+          try:
+              print(open('dati/browser.md').read())
+          except OSError:
+              print('(prova dei browser non disponibile)')
+          EOF
+          cat copertura.md
       - name: Pubblica il rapporto nel ramo "rapporti"
-        if: always()
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p /tmp/rep && cp copertura.md /tmp/rep/ 2>/dev/null || echo "nessun rapporto" > /tmp/rep/copertura.md
+          mkdir -p /tmp/rep && cp copertura.md /tmp/rep/
           cd /tmp/rep
           git init -q -b rapporti
           git config user.name "github-actions[bot]"
