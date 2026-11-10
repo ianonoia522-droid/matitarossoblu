@@ -60,6 +60,7 @@ jobs:
           path: |
             lavoro/parziale-*.bin
             lavoro/documenti-*.jsonl
+            lavoro/campioni-*.jsonl
           retention-days: 7
 
   unisci:

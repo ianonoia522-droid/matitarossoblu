@@ -135,6 +135,7 @@ async function scarica() {
   const tag = dom + '-' + pi;
   const fpOut = fs.openSync(path.join(dir, 'parziale-' + tag + '.bin'), 'w');
   const docOut = fs.openSync(path.join(dir, 'documenti-' + tag + '.jsonl'), 'w');
+  const campOut = fs.openSync(path.join(dir, 'campioni-' + tag + '.jsonl'), 'w');
   const cache = new Map(), seenText = new Set();
   let next = 0, done = 0, ok = 0, short = 0, dup = 0, fail = 0, bytes = 0;
   const t0 = Date.now();
@@ -148,9 +149,9 @@ async function scarica() {
     const { title, text } = extract(decode(w.body, w.http));
     const toks = MR.tokenize(text);
     if (toks.length < 80) { short++; return; }
-    const h = crypto.createHash('md5').update(toks.slice(0, 400).map(t => t.w).join(' ')).digest('hex');
-    if (seenText.has(h)) { dup++; return; }
-    seenText.add(h);
+    const th = crypto.createHash('md5').update(toks.slice(0, 400).map(t => t.w).join(' ')).digest('hex');
+    if (seenText.has(th)) { dup++; return; }
+    seenText.add(th);
     if (cache.size > 3e6) cache.clear();
     const fps = X.fingerprints(toks, { cache });
     const uniq = new Map();
@@ -161,6 +162,13 @@ async function scarica() {
     for (const f of uniq.values()) { rec.writeUInt32LE(f.a, o); rec.writeUInt32LE(f.b, o + 4); o += 8; }
     fs.writeSync(fpOut, rec);
     fs.writeSync(docOut, JSON.stringify({ url: r.url, title: title.slice(0, 160), parole: toks.length }) + '\n');
+    // verifica: per circa una pagina su 400 si conservano le impronte (non il testo) di estratti di 40 e 80 parole
+    if (h(r.url) % 400 === 7 && toks.length >= 140) {
+      const start = 10 + (h(r.url + '#') % (toks.length - 100));
+      const camp = { url: r.url };
+      for (const L of [40, 80]) camp['f' + L] = X.fingerprints(toks.slice(start, start + L), { cache }).map(f => [f.a, f.b, f.pos]);
+      fs.writeSync(campOut, JSON.stringify(camp) + '\n');
+    }
     ok++;
   }
   async function worker() {
@@ -173,12 +181,12 @@ async function scarica() {
     }
   }
   await Promise.all(Array.from({ length: conc }, worker));
-  fs.closeSync(fpOut); fs.closeSync(docOut);
+  fs.closeSync(fpOut); fs.closeSync(docOut); fs.closeSync(campOut);
   log(dom, 'fine: valide', ok, '· brevi', short, '· doppie', dup, '· errori', fail, '·', Math.round(bytes / 1e6) + ' MB in', Math.round((Date.now() - t0) / 1000) + ' s');
 }
 
 // ---------- unione delle parti e scrittura dell'indice ----------
-function unisci() {
+async function unisci() {
   const dir = args.lavoro, out = args.uscita;
   const parts = fs.readdirSync(dir).filter(f => /^parziale-.+\.bin$/.test(f)).sort();
   const R = new Raccolta(1 << 22), docs = [], siti = new Map();
@@ -198,6 +206,43 @@ function unisci() {
   }
   const m = scriviIndice(out, docs, R, { archivio: args.archivio || '', archivioData: args.data || '', siti: Array.from(siti, ([dominio, documenti]) => ({ dominio, documenti })) });
   log('indice:', m.documenti, 'documenti,', m.voci, 'voci,', m.scartate, 'scartate,', m.files.length, 'file,', m.bits, 'bit, secchio massimo', m.maxBucket);
+  // verifica sull'indice appena scritto, con lo stesso codice di ricerca del browser
+  const camp = fs.readdirSync(dir).filter(f => /^campioni-.+\.jsonl$/.test(f)).flatMap(f => fs.readFileSync(path.join(dir, f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)));
+  const idx = X.createIndex('indice/', { fetch: fileFetch(out) });
+  const ver = { campioni: camp.length };
+  for (const L of [40, 80]) {
+    let found = 0, any = 0;
+    for (const c of camp) {
+      const fps = c['f' + L].map(([a, b, pos]) => ({ a, b, pos }));
+      const { hits } = await idx.lookup(fps);
+      let ok = false, some = false;
+      for (const [id, pos] of hits) {
+        if (docs[id].url !== c.url) continue;
+        some = true;
+        if (X.passages(pos, m.k, m.w).some(p => p.n >= 2)) ok = true;
+      }
+      if (ok) found++;
+      if (some) any++;
+    }
+    ver['trovati' + L] = found; ver['impronta' + L] = any;
+    log('verifica', L, 'parole:', found + '/' + camp.length, 'trovati (almeno 2 impronte vicine),', any + '/' + camp.length, 'con almeno un\'impronta');
+  }
+  const metaPath = path.join(out, 'meta.json'), meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  meta.verifica = ver;
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 1));
+}
+
+// lettura dei file dell'indice da disco, con le richieste parziali, come farebbe il browser
+function fileFetch(root) {
+  return async (u, init) => {
+    const f = path.join(root, u.replace(/^indice\//, '').split('?')[0]);
+    if (!fs.existsSync(f)) return { ok: false, status: 404, headers: { get: () => null } };
+    const buf = fs.readFileSync(f);
+    const rg = init && init.headers && init.headers.Range;
+    const part = rg ? (m => buf.subarray(+m[1], +m[2] + 1))(/bytes=(\d+)-(\d+)/.exec(rg)) : buf;
+    return { ok: true, status: rg ? 206 : 200, headers: { get: k => (k === 'Content-Length' ? String(part.length) : null) },
+      arrayBuffer: async () => part.buffer.slice(part.byteOffset, part.byteOffset + part.length), json: async () => JSON.parse(part.toString('utf8')) };
+  };
 }
 
 if (require.main === module) {
