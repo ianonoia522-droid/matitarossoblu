@@ -1,15 +1,16 @@
 name: Costruzione dell'indice di impronte
 
-# Lenta e riprendibile. Ogni corsa legge pagine da Common Crawl al ritmo che il suo firewall consente (una macchina,
-# 1,5 richieste al secondo, pause quando arriva un rifiuto), salva le impronte nel ramo "indice-dati" e riscrive
-# l'indice completo nel ramo "indice-build". La corsa notturna continua da dove si era fermata la precedente.
+# Riprendibile, una macchina alla volta. Ogni corsa legge pagine da Common Crawl al ritmo che il suo firewall consente
+# (parte da 2 richieste al secondo, sale fino a 6 finché non arrivano rifiuti, si dimezza e fa una pausa quando
+# arrivano), salva le impronte nel ramo "indice-dati" e riscrive l'indice completo nel ramo "indice-build".
+# Se restano pagine, alla fine avvia la corsa successiva: le corse si susseguono senza mai sovrapporsi.
 on:
   workflow_dispatch:
     inputs:
       minuti:
         description: "Minuti di lettura delle pagine in questa corsa"
         required: false
-        default: '270'
+        default: '330'
       elenchi:
         description: "Rifare gli elenchi delle pagine di tutti i siti (si/no)"
         required: false
@@ -19,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: indice
@@ -83,10 +85,10 @@ jobs:
           FINE=$(( (INIZIO + 315 * 60) * 1000 ))
           LIM=$(( ($(date +%s) + ${MINUTI:-270} * 60) * 1000 ))
           [ "$LIM" -lt "$FINE" ] && FINE=$LIM
-          node tools/indice/costruisci.js scarica --dati dati --tag "${GITHUB_RUN_ID}" --ritmo 1.5 --concorrenza 2 --max 60000 --fine "$FINE"
+          node tools/indice/costruisci.js scarica --dati dati --tag "${GITHUB_RUN_ID}" --ritmo 2 --ritmo-max 6 --ritmo-min 0.5 --concorrenza 3 --max 60000 --fine "$FINE"
           cat dati/ultima-corsa.json
         env:
-          MINUTI: ${{ inputs.minuti }}
+          MINUTI: ${{ inputs.minuti || '330' }}
       - name: Unione e scrittura dell'indice
         run: |
           read -r ARCH DATA DAL < <(python3 -c "import json; c=json.load(open('tools/indice/siti.json')); a=c['archivi']; print(a[-1]+'..'+a[0], c['data'], c.get('dal', c['data']))")
@@ -107,3 +109,12 @@ jobs:
           git add indice
           git commit -q -m "Indice di impronte (corsa ${GITHUB_RUN_ID})"
           git push -q -f "$REPO_URL" indice-build
+      - name: Avvia la corsa successiva se restano pagine
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          read -r LETTE RESTANO < <(python3 -c "import json; c=json.load(open('dati/ultima-corsa.json')); print(c['lette'], c['restano'])")
+          echo "lette $LETTE, restano $RESTANO"
+          if [ "$RESTANO" -gt 0 ] && [ "$LETTE" -gt 0 ]; then
+            gh workflow run indice.yml --repo "$GITHUB_REPOSITORY" --ref main -f minuti=330 -f elenchi=no
+          fi
