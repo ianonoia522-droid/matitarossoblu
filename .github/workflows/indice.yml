@@ -1,8 +1,9 @@
 name: Costruzione dell'indice di impronte
 
 # Riprendibile, una macchina alla volta. Ogni corsa legge pagine da Common Crawl al ritmo che il suo firewall consente
-# (parte da 2 richieste al secondo, sale fino a 6 finché non arrivano rifiuti, si dimezza e fa una pausa quando
-# arrivano), salva le impronte nel ramo "indice-dati" e riscrive l'indice completo nel ramo "indice-build".
+# (riparte dal ritmo finale della corsa precedente, sale fino a 6 richieste al secondo finché non arrivano rifiuti,
+# si dimezza e fa una pausa quando arrivano), salva le impronte nel ramo "indice-dati" e, se la verifica regge,
+# riscrive l'indice completo nel ramo "indice-build", da cui lo prende il flusso "Pubblicazione del sito".
 # Se restano pagine, alla fine avvia la corsa successiva: le corse si susseguono senza mai sovrapporsi.
 on:
   workflow_dispatch:
@@ -37,6 +38,7 @@ jobs:
         run: echo "INIZIO=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - name: Dati delle corse precedenti (ramo indice-dati)
+        id: dati
         run: |
           git clone -q --depth 1 --branch indice-dati "$REPO_URL" dati || { mkdir -p dati && git -C dati init -q -b indice-dati && git -C dati remote add origin "$REPO_URL"; }
           mkdir -p dati/elenchi dati/parti
@@ -81,27 +83,48 @@ jobs:
         env:
           RIFAI: ${{ inputs.elenchi }}
       - name: Lettura delle pagine
+        id: lettura
         run: |
           FINE=$(( (INIZIO + 315 * 60) * 1000 ))
           LIM=$(( ($(date +%s) + ${MINUTI:-270} * 60) * 1000 ))
           [ "$LIM" -lt "$FINE" ] && FINE=$LIM
-          node tools/indice/costruisci.js scarica --dati dati --tag "${GITHUB_RUN_ID}" --ritmo 2 --ritmo-max 6 --ritmo-min 0.5 --concorrenza 3 --max 60000 --fine "$FINE"
+          # si riparte dal ritmo con cui è finita la corsa precedente, tra 1 e 6 richieste al secondo
+          RITMO=$(python3 -c "import json; print(min(6.0, max(1.0, float(json.load(open('dati/ultima-corsa.json')).get('ritmo', 2)))))" 2>/dev/null || echo 2)
+          rm -f dati/ultima-corsa.json
+          node tools/indice/costruisci.js scarica --dati dati --tag "${GITHUB_RUN_ID}" --ritmo "$RITMO" --ritmo-max 6 --ritmo-min 0.5 --concorrenza 3 --max 60000 --fine "$FINE"
           cat dati/ultima-corsa.json
+          echo "lette=$(python3 -c "import json; print(json.load(open('dati/ultima-corsa.json'))['lette'])")" >> "$GITHUB_OUTPUT"
         env:
           MINUTI: ${{ inputs.minuti || '330' }}
-      - name: Unione e scrittura dell'indice
-        run: |
-          read -r ARCH DATA DAL < <(python3 -c "import json; c=json.load(open('tools/indice/siti.json')); a=c['archivi']; print(a[-1]+'..'+a[0], c['data'], c.get('dal', c['data']))")
-          node tools/indice/costruisci.js unisci --dati dati --uscita uscita/indice --archivio "$ARCH" --data "$DATA" --dal "$DAL"
-          du -sh uscita/indice; ls uscita/indice/fp | wc -l; cat uscita/indice/meta.json
+      # i dati letti si salvano anche se la lettura si è interrotta o la corsa è stata annullata
       - name: Salva i dati nel ramo "indice-dati"
+        id: salva
+        if: always() && steps.dati.outcome == 'success'
         run: |
           cd dati
           git add -A
           git commit -q -m "Pagine lette nella corsa ${GITHUB_RUN_ID}" || echo "niente di nuovo"
           git push -q origin indice-dati
-      - name: Pubblica l'indice nel ramo "indice-build"
+      - name: Unione e scrittura dell'indice
+        id: unione
+        if: steps.lettura.outcome == 'success' && steps.lettura.outputs.lette != '0'
         run: |
+          read -r ARCH DATA DAL < <(python3 -c "import json; c=json.load(open('tools/indice/siti.json')); a=c['archivi']; print(a[-1]+'..'+a[0], c['data'], c.get('dal', c['data']))")
+          node tools/indice/costruisci.js unisci --dati dati --uscita uscita/indice --archivio "$ARCH" --data "$DATA" --dal "$DAL"
+          du -sh uscita/indice; ls uscita/indice/fp | wc -l; cat uscita/indice/meta.json
+      # l'indice si pubblica solo se la verifica sugli estratti di 80 parole ne ritrova almeno il 90%
+      - name: Pubblica l'indice nel ramo "indice-build"
+        if: steps.unione.outcome == 'success'
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          v = json.load(open('uscita/indice/meta.json')).get('verifica', {})
+          c, t = v.get('campioni', 0), v.get('trovati80', 0)
+          print('verifica:', v)
+          if c >= 20 and t < 0.9 * c:
+              print('::error::Verifica non superata: %d estratti di 80 parole ritrovati su %d. Indice non pubblicato.' % (t, c))
+              sys.exit(1)
+          PY
           cd uscita
           git init -q -b indice-build
           git config user.name "github-actions[bot]"
@@ -109,10 +132,14 @@ jobs:
           git add indice
           git commit -q -m "Indice di impronte (corsa ${GITHUB_RUN_ID})"
           git push -q -f "$REPO_URL" indice-build
+      # la catena si ferma se la lettura non è arrivata in fondo (errore o annullamento) o se i dati non sono stati
+      # salvati: riparte con la corsa notturna, senza ripetere all'infinito una corsa che fallisce
       - name: Avvia la corsa successiva se restano pagine
+        if: ${{ !cancelled() && steps.salva.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ ! -f dati/ultima-corsa.json ]; then echo "Lettura non conclusa: nessuna corsa successiva."; exit 0; fi
           read -r LETTE RESTANO < <(python3 -c "import json; c=json.load(open('dati/ultima-corsa.json')); print(c['lette'], c['restano'])")
           echo "lette $LETTE, restano $RESTANO"
           if [ "$RESTANO" -gt 0 ] && [ "$LETTE" -gt 0 ]; then

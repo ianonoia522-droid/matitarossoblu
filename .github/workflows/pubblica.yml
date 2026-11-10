@@ -1,0 +1,72 @@
+name: Pubblicazione del sito
+
+# Pubblica su GitHub Pages il sito (ramo main) insieme all'ultimo indice di impronte (ramo indice-build), senza che
+# l'indice entri mai nella storia di main: a ogni aggiornamento dell'indice la storia del progetto non cresce.
+# Funziona quando in Settings → Pages la sorgente ("Source") è "GitHub Actions". Finché è "Deploy from a branch"
+# questo flusso si limita a controllarlo e il sito resta pubblicato dal ramo main come prima.
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: ["Costruzione dell'indice di impronte"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  controlla:
+    runs-on: ubuntu-latest
+    permissions:
+      pages: read
+    outputs:
+      sorgente: ${{ steps.sorgente.outputs.sorgente }}
+    steps:
+      - name: Sorgente di GitHub Pages
+        id: sorgente
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          S=$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .build_type 2>/dev/null || echo sconosciuta)
+          echo "sorgente=$S" >> "$GITHUB_OUTPUT"
+          echo "Sorgente di Pages: $S"
+          if [ "$S" != workflow ]; then
+            echo "::notice::Pages pubblica ancora dal ramo main (build_type=$S), quindi senza indice. Per pubblicarlo: Settings → Pages → Source: GitHub Actions."
+          fi
+
+  pubblica:
+    needs: controlla
+    if: needs.controlla.outputs.sorgente == 'workflow' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Sito e indice
+        run: |
+          mkdir _site
+          git archive HEAD | tar -x -C _site
+          if git ls-remote --exit-code --heads origin indice-build > /dev/null; then
+            git fetch -q --depth 1 origin +refs/heads/indice-build:refs/remotes/origin/indice-build
+            git archive refs/remotes/origin/indice-build indice | tar -x -C _site
+            python3 -c "import json; m=json.load(open('_site/indice/meta.json')); print('indice:', m['documenti'], 'documenti,', m['voci'], 'voci, verifica', m.get('verifica'))"
+          else
+            echo "::warning::Nessun indice nel ramo indice-build: pubblico il sito senza indice."
+          fi
+          du -sh _site
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - name: Pubblicazione
+        id: deploy
+        uses: actions/deploy-pages@v5
