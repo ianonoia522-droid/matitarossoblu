@@ -152,7 +152,12 @@ function extract(html) {
 // di fila senza progressi la corsa finisce e salva quanto letto. Per ogni pagina si salvano solo impronte, indirizzo,
 // titolo, numero di parole e un hash del testo (per riconoscere i doppioni nelle corse successive).
 async function scarica() {
-  const dati = args.dati, tag = String(args.tag || Date.now()), ritmo = +(args.ritmo || 1.5), conc = +(args.concorrenza || 2);
+  const dati = args.dati, tag = String(args.tag || Date.now()), conc = +(args.concorrenza || 2);
+  // ritmo adattivo da una sola macchina: sale di 0,5 ogni 5 minuti senza rifiuti, si dimezza a ogni rifiuto
+  let ritmo = +(args.ritmo || 1.5);
+  const ritmoMax = +(args['ritmo-max'] || ritmo), ritmoMin = +(args['ritmo-min'] || 0.5);
+  let ultimoCambio = Date.now();
+  const passoMs = +(args.passo || 5 * 60000);   // intervallo senza rifiuti prima di accelerare (si cambia solo nei test)
   const fine = args.fine ? +args.fine : Date.now() + (+(args.minuti || 300)) * 60000;
   const pausaMs = +(args.pausa || 5 * 60000);   // pausa dopo un rifiuto per frequenza (si cambia solo nei test)
   const elenchi = fs.readdirSync(path.join(dati, 'elenchi')).filter(f => /^elenco-.+\.jsonl$/.test(f));
@@ -197,6 +202,7 @@ async function scarica() {
     for (;;) {
       const now = Date.now();
       if (now < pausaFino) { await sleep(Math.min(pausaFino - now, 10000)); continue; }
+      if (ritmo < ritmoMax && now - ultimoCambio > passoMs) { ritmo = Math.min(ritmoMax, ritmo + 0.5); ultimoCambio = now; log('nessun rifiuto di recente: ritmo', ritmo, 'al secondo'); }
       const t = Math.max(now, next); next = t + 1000 / ritmo;
       if (t > now) await sleep(t - now);
       return;
@@ -216,7 +222,8 @@ async function scarica() {
         pause = ok > lastOk ? 1 : pause + 1; lastOk = ok;
         if (pause > 4) { stop = true; log('limite di Common Crawl: troppe pause senza progressi, mi fermo'); return; }
         pausaFino = Date.now() + pausaMs * pause;
-        log('limite di Common Crawl (' + res.status + '): pausa di', Math.round(pausaMs * pause / 1000), 'secondi');
+        ritmo = Math.max(ritmoMin, ritmo / 2); ultimoCambio = Date.now();
+        log('limite di Common Crawl (' + res.status + '): pausa di', Math.round(pausaMs * pause / 1000), 'secondi, poi ritmo', ritmo, 'al secondo');
       }
       return;
     }
@@ -261,7 +268,7 @@ async function scarica() {
   await Promise.all(Array.from({ length: conc }, worker));
   for (const o of out.values()) for (const k of ['fp', 'doc', 'camp', 'salt']) fs.closeSync(o[k]);
   log('fine: lette', ok, '· saltate', saltate, '· limiti', limiti, '· restano', queue.length, '·', Math.round(bytes / 1e6) + ' MB in', Math.round((Date.now() - t0) / 60000), 'min');
-  fs.writeFileSync(path.join(args.dati, 'ultima-corsa.json'), JSON.stringify({ tag, lette: ok, saltate, limiti, restano: queue.length, minuti: Math.round((Date.now() - t0) / 60000) }, null, 1));
+  fs.writeFileSync(path.join(args.dati, 'ultima-corsa.json'), JSON.stringify({ tag, lette: ok, saltate, limiti, restano: queue.length, ritmo, minuti: Math.round((Date.now() - t0) / 60000) }, null, 1));
 }
 
 // ---------- unione delle parti e scrittura dell'indice ----------
