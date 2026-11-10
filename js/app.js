@@ -357,8 +357,10 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
   const idx = { running: false, ctrl: null };
   const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
   function archivioLabel(m) {
-    const d = m && m.archivioData ? new Date(m.archivioData) : null;
-    return d && !isNaN(d) ? 'archivio Common Crawl di ' + MESI[d.getUTCMonth()] + ' ' + d.getUTCFullYear() : 'archivio Common Crawl' + (m && m.archivio ? ' ' + m.archivio : '');
+    const mese = v => { const d = v ? new Date(v) : null; return d && !isNaN(d) ? MESI[d.getUTCMonth()] + ' ' + d.getUTCFullYear() : ''; };
+    const a = mese(m && m.archivioData), da = mese(m && m.archivioDal);
+    if (a && da && da !== a) return 'archivio Common Crawl, raccolte da ' + da + ' a ' + a;
+    return a ? 'archivio Common Crawl di ' + a : 'archivio Common Crawl' + (m && m.archivio ? ' ' + m.archivio : '');
   }
   function idxErrText(e) {
     switch (e && e.kind) {
