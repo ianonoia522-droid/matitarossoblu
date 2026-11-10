@@ -5,7 +5,9 @@
 //   node umani.js wikipedia --n 150 --out umani-wikipedia.jsonl
 //       voci casuali di Wikipedia in italiano, nella versione precedente a novembre 2022 (prima di ChatGPT)
 //   node umani.js mc4 --file a.json.gz,b.json.gz --n-studio 300 --n-web 300 --out umani-mc4.jsonl
-//       pagine web italiane raccolte nel 2019-2020 (mC4): siti di studio e un campione del resto del web
+//   node umani.js mc4 --parti 10-34 --n-temi 150 --n-studio 75 --n-web 0 --out umani-mc4-1.jsonl
+//       pagine web italiane raccolte nel 2019-2020 (mC4): temi e componimenti (dall'indirizzo), siti di studio
+//       e un campione del resto del web
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -81,32 +83,60 @@ async function wikipedia() {
 // siti di studio e di appunti (elenco chiuso: con parole come "studio" o "temi" nel nome entravano anche studi
 // legali e aziende di sistemi). Il resto è "web".
 const STUDIO = /(?:^|\.)(?:studenti\.it|skuola\.net|studentville\.it|atuttascuola\.it|homolaicus\.com|studiarapido\.it|scuolissima\.com|tesionline\.it|docsity\.com|oilproject\.org|weschool\.com|sapere\.it|appuntimania\.it|riassuntiok\.com|nienteansia\.it|maestrasabry\.it|ilsapere\.org|parafrasando\.it)$/;
+// pagine che dall'indirizzo sembrano temi o componimenti, su qualunque sito (scuole, blog, siti di studio):
+// sono il confronto più vicino ai compiti veri. "tema" da solo non basta (pagine di categoria, temi grafici).
+const TEMA = /(?:^|[\/\-_.])(?:tem[ai][-_](?:svolt|sull?|sulla|sui|sugli|sulle|su[-_]|di[-_]|argomentativ|descrittiv|espositiv|narrativ|riflessiv|per[-_]|scolastic|d[-_]italiano|italiano)|temisvolti|temi[-_]saggi|saggi?o?[-_]brev|componiment[oi][-_]|testo[-_]argomentativo|testi[-_]argomentativi)/i;
+
+// righe di un file .json.gz, locale o scaricato al momento (senza salvarlo su disco)
+async function* righeGz(sorgente) {
+  let input;
+  if (/^https?:/.test(sorgente)) {
+    const res = await fetch(sorgente, { headers: { 'User-Agent': UA } });
+    if (!res.ok) throw new Error('stato ' + res.status);
+    input = require('stream').Readable.fromWeb(res.body);
+  } else input = fs.createReadStream(sorgente);
+  const gz = input.pipe(zlib.createGunzip());
+  try {
+    for await (const ln of readline.createInterface({ input: gz, crlfDelay: Infinity })) yield ln;
+  } finally { input.destroy(); gz.destroy(); }
+}
+
 async function mc4() {
-  const files = String(args.file || '').split(',').filter(Boolean);
-  const max = { studio: +(args['n-studio'] || 300), web: +(args['n-web'] || 300) };
-  const out = { studio: [], web: [] };
-  let righe = 0;
-  for (const f of files) {
-    const rl = readline.createInterface({ input: fs.createReadStream(f).pipe(zlib.createGunzip()), crlfDelay: Infinity });
-    for await (const ln of rl) {
-      righe++;
-      if (out.studio.length >= max.studio && out.web.length >= max.web) break;
-      let d; try { d = JSON.parse(ln); } catch (e) { continue; }
-      let host = ''; try { host = new URL(d.url).host.replace(/^www\./, ''); } catch (e) { continue; }
-      const tipo = STUDIO.test(host) ? 'studio' : 'web';
-      if (out[tipo].length >= max[tipo]) continue;
-      if (tipo === 'web' && rnd() > 0.02) continue;
-      const par = String(d.text || '').split('\n').map(s => s.trim()).filter(Boolean);
-      if (conta(par.join(' ')) < 250) continue;
-      const t = taglia(par, 250 + Math.floor(rnd() * 650));
-      if (t.parole < 200) continue;
-      const s = segnali(t.testo);
-      if (s.lingua !== 'it') continue;
-      out[tipo].push(Object.assign({ fonte: 'mc4-' + tipo, host, data: String(d.timestamp || '').slice(0, 10) }, s));
-    }
-    log(path.basename(f), ': righe lette', righe, '· studio', out.studio.length, '· web', out.web.length);
+  // --file a.json.gz,b.json.gz oppure --parti 10-34 (scaricate da --base, una alla volta)
+  let fonti = String(args.file || '').split(',').filter(Boolean);
+  if (args.parti) {
+    const [a, b] = String(args.parti).split('-').map(Number);
+    const base = args.base || 'https://huggingface.co/datasets/allenai/c4/resolve/main/multilingual';
+    for (let i = a; i <= (b || a); i++) fonti.push(base + '/c4-it.tfrecord-' + String(i).padStart(5, '0') + '-of-01024.json.gz');
   }
-  return out.studio.concat(out.web);
+  const max = { temi: +(args['n-temi'] || 0), studio: +(args['n-studio'] || 300), web: +(args['n-web'] || 300) };
+  const out = { temi: [], studio: [], web: [] };
+  const pieno = () => Object.keys(max).every(k => out[k].length >= max[k]);
+  let righe = 0;
+  for (const f of fonti) {
+    if (pieno()) break;
+    try {
+      for await (const ln of righeGz(f)) {
+        righe++;
+        if (pieno()) break;
+        let d; try { d = JSON.parse(ln); } catch (e) { continue; }
+        let u; try { u = new URL(d.url); } catch (e) { continue; }
+        const host = u.host.replace(/^www\./, '');
+        const tipo = TEMA.test(u.pathname) ? 'temi' : STUDIO.test(host) ? 'studio' : 'web';
+        if (out[tipo].length >= max[tipo]) continue;
+        if (tipo === 'web' && rnd() > 0.02) continue;
+        const par = String(d.text || '').split('\n').map(s => s.trim()).filter(Boolean);
+        if (conta(par.join(' ')) < 250) continue;
+        const t = taglia(par, 250 + Math.floor(rnd() * 650));
+        if (t.parole < 200) continue;
+        const s = segnali(t.testo);
+        if (s.lingua !== 'it') continue;
+        out[tipo].push(Object.assign({ fonte: 'mc4-' + tipo, host, url: d.url, data: String(d.timestamp || '').slice(0, 10) }, s));
+      }
+    } catch (e) { log('salto', path.basename(f), ':', e.message); }
+    log(path.basename(f), ': righe lette', righe, '· temi', out.temi.length, '· studio', out.studio.length, '· web', out.web.length);
+  }
+  return out.temi.concat(out.studio, out.web);
 }
 
 if (require.main === module) {
@@ -119,4 +149,4 @@ if (require.main === module) {
   }).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { taglia, STUDIO };
+module.exports = { taglia, STUDIO, TEMA };

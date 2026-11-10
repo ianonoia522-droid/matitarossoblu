@@ -14,7 +14,7 @@ for (const f of files) for (const ln of fs.readFileSync(f, 'utf8').split('\n')) 
 // un campione per testo: per i testi generati si usa la versione "ripulita" (come la incollerebbe uno studente)
 // pagine web: il gruppo si decide dal sito con l'elenco chiuso di umani.js (le prime raccolte usavano un filtro più largo)
 const { STUDIO } = require('./umani.js');
-const gruppoUmano = r => (/^mc4-/.test(r.fonte) ? (STUDIO.test(r.host || '') ? 'mc4-studio' : 'mc4-web') : r.fonte);
+const gruppoUmano = r => (r.fonte === 'mc4-studio' || r.fonte === 'mc4-web' ? (STUDIO.test(r.host || '') ? 'mc4-studio' : 'mc4-web') : r.fonte);
 const umani = righe.filter(r => r.fonte !== 'ai').map(r => Object.assign({}, r, { gruppo: gruppoUmano(r) }));
 const ai = righe.filter(r => r.fonte === 'ai').map(r => Object.assign({ gruppo: r.modello, stile: r.stile }, r.pulito));
 const aiGrezzi = righe.filter(r => r.fonte === 'ai').map(r => Object.assign({ gruppo: r.modello, stile: r.stile }, r.grezzo));

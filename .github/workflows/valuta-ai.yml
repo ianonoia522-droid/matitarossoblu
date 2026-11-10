@@ -41,29 +41,25 @@ jobs:
           path: out/
           retention-days: 7
 
+  # pagine web italiane raccolte nel 2019-2020 (mC4), lette al volo senza salvarle su disco: temi e componimenti
+  # (riconosciuti dall'indirizzo) e siti di studio. Le parti 0-9 sono già nel campione pubblicato (umani-mc4.jsonl).
   umani-mc4:
     if: inputs.parte != 'ai'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        parti: ['10-34', '35-59', '60-84', '85-109']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Parti di mC4 in italiano (pagine web raccolte nel 2019-2020)
-        run: |
-          mkdir -p mc4
-          base="https://huggingface.co/datasets/allenai/c4/resolve/main/multilingual"
-          for i in 00000 00001 00002 00003 00004 00005 00006 00007 00008 00009; do
-            f="c4-it.tfrecord-$i-of-01024.json.gz"
-            curl -fsSL --retry 3 -o "mc4/$f" "$base/$f" || { echo "::warning::$f non scaricato"; rm -f "mc4/$f"; }
-          done
-          ls -la mc4
-          ls mc4/*.gz > /dev/null
-      - run: node tools/valuta/umani.js mc4 --file "$(ls mc4/*.gz | paste -sd, -)" --n-studio 300 --n-web 300 --out out/umani-mc4.jsonl
+      - run: node tools/valuta/umani.js mc4 --parti ${{ matrix.parti }} --n-temi 150 --n-studio 75 --n-web 0 --out out/umani-mc4-${{ matrix.parti }}.jsonl
       - uses: actions/upload-artifact@v4
         with:
-          name: valuta-umani-mc4
+          name: valuta-umani-mc4-${{ matrix.parti }}
           path: out/
           retention-days: 7
 
