@@ -21,8 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrice: ${{ steps.m.outputs.matrice }}
+      archivi: ${{ steps.m.outputs.archivi }}
       archivio: ${{ steps.m.outputs.archivio }}
       data: ${{ steps.m.outputs.data }}
+      dal: ${{ steps.m.outputs.dal }}
     steps:
       - uses: actions/checkout@v4
       - id: m
@@ -31,8 +33,11 @@ jobs:
           import json
           c = json.load(open('tools/indice/siti.json'))
           print('matrice=' + json.dumps({'include': c['siti']}))
-          print('archivio=' + c['archivio'])
+          a = c['archivi']
+          print('archivi=' + ','.join(a))
+          print('archivio=' + (a[0] if len(a) == 1 else a[-1] + '..' + a[0]))
           print('data=' + c['data'])
+          print('dal=' + c.get('dal', c['data']))
           EOF
 
   sito:
@@ -41,7 +46,7 @@ jobs:
     timeout-minutes: 340
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 2
       matrix: ${{ fromJSON(needs.piano.outputs.matrice) }}
     steps:
       - uses: actions/checkout@v4
@@ -57,10 +62,10 @@ jobs:
       - name: Elenco delle pagine (indice a colonne di Common Crawl)
         run: |
           mkdir -p lavoro
-          python3 tools/indice/elenca_colonne.py ${{ needs.piano.outputs.archivio }} ${{ matrix.dominio }} ${{ matrix.modo }} lavoro/grezzo-${{ matrix.dominio }}.jsonl
+          python3 tools/indice/elenca_colonne.py ${{ needs.piano.outputs.archivi }} ${{ matrix.dominio }} ${{ matrix.modo }} lavoro/grezzo-${{ matrix.dominio }}.jsonl
           node tools/indice/costruisci.js elenca --da lavoro/grezzo-${{ matrix.dominio }}.jsonl --archivio ${{ needs.piano.outputs.archivio }} --dominio ${{ matrix.dominio }} --modo ${{ matrix.modo }} --filtro "${{ matrix.filtro }}" --lavoro lavoro
       - name: Lettura delle pagine e impronte
-        run: node tools/indice/costruisci.js scarica --dominio ${{ matrix.dominio }} --lavoro lavoro --max ${{ matrix.max }} --concorrenza 8
+        run: node tools/indice/costruisci.js scarica --dominio ${{ matrix.dominio }} --lavoro lavoro --max ${{ matrix.max }} --concorrenza 6
       - uses: actions/upload-artifact@v4
         with:
           name: parziale-${{ matrix.dominio }}
@@ -88,7 +93,7 @@ jobs:
       - name: Scrittura dell'indice
         run: |
           ls -la lavoro
-          node tools/indice/costruisci.js unisci --lavoro lavoro --uscita uscita/indice --archivio ${{ needs.piano.outputs.archivio }} --data ${{ needs.piano.outputs.data }}
+          node tools/indice/costruisci.js unisci --lavoro lavoro --uscita uscita/indice --archivio ${{ needs.piano.outputs.archivio }} --data ${{ needs.piano.outputs.data }} --dal ${{ needs.piano.outputs.dal }}
           du -sh uscita/indice; ls -la uscita/indice | head -20
       - name: Pubblica nel ramo "indice-build"
         env:

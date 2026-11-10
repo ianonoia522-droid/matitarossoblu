@@ -224,7 +224,7 @@ async function unisci() {
     siti.set(dom, (siti.get(dom) || 0) + meta.length);
     log('unite', p, '· documenti', docs.length, '· impronte', R.n);
   }
-  const m = scriviIndice(out, docs, R, { archivio: args.archivio || '', archivioData: args.data || '', siti: Array.from(siti, ([dominio, documenti]) => ({ dominio, documenti })) });
+  const m = scriviIndice(out, docs, R, { archivio: args.archivio || '', archivioData: args.data || '', archivioDal: typeof args.dal === 'string' ? args.dal : '', siti: Array.from(siti, ([dominio, documenti]) => ({ dominio, documenti })) });
   log('indice:', m.documenti, 'documenti,', m.voci, 'voci,', m.scartate, 'scartate,', m.files.length, 'file,', m.bits, 'bit, secchio massimo', m.maxBucket);
   // verifica sull'indice appena scritto, con lo stesso codice di ricerca del browser
   const camp = fs.readdirSync(dir).filter(f => /^campioni-.+\.jsonl$/.test(f)).flatMap(f => fs.readFileSync(path.join(dir, f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)));
