@@ -1,0 +1,33 @@
+# Copertura dei siti di studio in Common Crawl (indice a colonne)
+
+Pagine HTML in italiano con stato 200, indirizzi unici, per archivio.
+
+| sito | 2026-43 | 2026-21 | 2025-51 | 2025-26 | 2024-51 | 2024-26 | 2023-50 | 2023-23 | risposte non riuscite (2026-43) |
+|---|---|---|---|---|---|---|---|---|---|
+| skuola.net | 20 | 39 | 39 | 24 | 32 | 52 | 34 | 43 | 403: 7, 301: 1, 302: 1 |
+| studenti.it | 0 | 0 | 1 | 1 | 171 | 3979 | 2919 | 3633 | 301: 4 |
+| treccani.it | 273 | 224 | 1002 | 56 | 30 | 63 | 8744 | 19720 | 301: 30, 403: 8, 404: 5 |
+| sapere.it | 3594 | 3380 | 15569 | 3791 | 4195 | 3998 | 13297 | 11969 | 302: 8, 404: 3 |
+| studentville.it | 1786 | 3157 | 13989 | 3954 | 4494 | 2500 | 2827 | 3272 | 301: 247, 404: 12 |
+| homolaicus.com | 261 | 899 | 1 | 76 | 310 | 1545 | 2494 | 1217 | 304: 169, 301: 3, 404: 1 |
+| atuttascuola.it | errore: HTTP Error: HTTP GET error on 'https://d | 2784 | 1792 | 0 | 2506 | 2446 | 10734 | 10823 |  |
+| scuolissima.com | errore: HTTP Error: HTTP GET error on 'https://d | 0 | 0 | 0 | 0 | 0 | 0 | 0 |  |
+| biografieonline.it | errore: HTTP Error: HTTP GET error on 'https://d | 16299 | 4157 | 19119 | 5369 | 4973 | 4402 | 20716 |  |
+| geopop.it | errore: HTTP Error: HTTP GET error on 'https://d | 1671 | 2049 | 1907 | 1033 | 615 | 517 | 503 |  |
+| focus.it | errore: HTTP Error: HTTP GET error on 'https://d | 0 | 275 | 168 | 8665 | 15659 | 16768 | 15256 |  |
+| weschool.com | errore: HTTP Error: HTTP GET error on 'https://d | 324 | 953 | 1260 | 1021 | 1207 | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| studiarapido.it | errore: HTTP Error: HTTP GET error on 'https://d | 0 | errore: HTTP Error: HTTP GET error on 'https://d | 2996 | 1323 | 2222 | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| storiaxxisecolo.it | errore: HTTP Error: HTTP GET error on 'https://d | 290 | errore: HTTP Error: HTTP GET error on 'https://d | 20 | 43 | 26 | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| ilfattostorico.com | errore: HTTP Error: HTTP GET error on 'https://d | 0 | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | 0 | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| edscuola.it | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | 4436 | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| youmath.it | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | 0 | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| chimica-online.it | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| tesionline.it | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| it.docsity.com | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| www.studocu.com | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| raiscuola.rai.it | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| appuntimania.com | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| riassuntini.com | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+| it.wikipedia.org | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d | errore: HTTP Error: HTTP GET error on 'https://d |  |
+
+(prova dei browser non disponibile)
