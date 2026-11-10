@@ -75,8 +75,9 @@ async function wikipedia() {
   return out;
 }
 
-// siti di studio e di appunti (nomi a dominio): il resto è "web"
-const STUDIO = /(?:^|\.)(?:studenti\.it|skuola\.net|studentville\.it|atuttascuola\.it|homolaicus\.com|studiarapido\.it|scuolissima\.com|tesionline\.it|docsity\.com|oilproject\.org|weschool\.com|sapere\.it|appuntimania\.it|riassuntiok\.com|[\w-]*(?:scuola|studia|studenti|appunti|riassunt|tesin|temi)[\w-]*\.[a-z]+)$/;
+// siti di studio e di appunti (elenco chiuso: con parole come "studio" o "temi" nel nome entravano anche studi
+// legali e aziende di sistemi). Il resto è "web".
+const STUDIO = /(?:^|\.)(?:studenti\.it|skuola\.net|studentville\.it|atuttascuola\.it|homolaicus\.com|studiarapido\.it|scuolissima\.com|tesionline\.it|docsity\.com|oilproject\.org|weschool\.com|sapere\.it|appuntimania\.it|riassuntiok\.com|nienteansia\.it|maestrasabry\.it|ilsapere\.org|parafrasando\.it)$/;
 async function mc4() {
   const files = String(args.file || '').split(',').filter(Boolean);
   const max = { studio: +(args['n-studio'] || 300), web: +(args['n-web'] || 300) };
