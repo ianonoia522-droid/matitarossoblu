@@ -48,10 +48,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm ci --no-audit --no-fund
-        working-directory: tools/indice
-      - name: Elenco delle pagine
-        run: node tools/indice/costruisci.js elenca --archivio ${{ needs.piano.outputs.archivio }} --dominio ${{ matrix.dominio }} --modo ${{ matrix.modo }} --filtro "${{ matrix.filtro }}" --lavoro lavoro
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          npm ci --no-audit --no-fund --prefix tools/indice
+          pip install duckdb==1.5.6
+      - name: Elenco delle pagine (indice a colonne di Common Crawl)
+        run: |
+          mkdir -p lavoro
+          python3 tools/indice/elenca_colonne.py ${{ needs.piano.outputs.archivio }} ${{ matrix.dominio }} ${{ matrix.modo }} lavoro/grezzo-${{ matrix.dominio }}.jsonl
+          node tools/indice/costruisci.js elenca --da lavoro/grezzo-${{ matrix.dominio }}.jsonl --archivio ${{ needs.piano.outputs.archivio }} --dominio ${{ matrix.dominio }} --modo ${{ matrix.modo }} --filtro "${{ matrix.filtro }}" --lavoro lavoro
       - name: Lettura delle pagine e impronte
         run: node tools/indice/costruisci.js scarica --dominio ${{ matrix.dominio }} --lavoro lavoro --max ${{ matrix.max }} --concorrenza 8
       - uses: actions/upload-artifact@v4
