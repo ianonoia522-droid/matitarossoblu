@@ -1,0 +1,155 @@
+name: Valutazione del rilevatore di testi generati
+
+# Misura il rilevatore (js/engine.js, analyzeAI) su testi scritti da persone prima di novembre 2022 e su temi
+# generati da modelli aperti, e pubblica il rapporto nel ramo "rapporti-ai". Dei testi umani si salvano solo
+# i segnali (numeri), il titolo o il sito: il testo non viene conservato.
+on:
+  workflow_dispatch:
+    inputs:
+      temi:
+        description: "Temi da generare per ogni modello"
+        required: false
+        default: '45'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: valuta-ai
+  cancel-in-progress: true
+
+jobs:
+  umani-wikipedia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund --prefix tools/indice
+      - run: node tools/valuta/umani.js wikipedia --n 150 --out out/umani-wikipedia.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: valuta-umani-wikipedia
+          path: out/
+          retention-days: 7
+
+  umani-mc4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Parti di mC4 in italiano (pagine web raccolte nel 2019-2020)
+        run: |
+          mkdir -p mc4
+          base="https://huggingface.co/datasets/allenai/c4/resolve/main/multilingual"
+          for i in 00000 00001 00002 00003 00004 00005; do
+            f="c4-it.tfrecord-$i-of-01024.json.gz"
+            curl -fsSL --retry 3 -o "mc4/$f" "$base/$f" || { echo "::warning::$f non scaricato"; rm -f "mc4/$f"; }
+          done
+          ls -la mc4
+          ls mc4/*.gz > /dev/null
+      - run: node tools/valuta/umani.js mc4 --file "$(ls mc4/*.gz | paste -sd, -)" --n-studio 300 --n-web 300 --out out/umani-mc4.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: valuta-umani-mc4
+          path: out/
+          retention-days: 7
+
+  genera:
+    runs-on: ubuntu-latest
+    timeout-minutes: 175
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { nome: qwen2.5-3b, repo: Qwen/Qwen2.5-3B-Instruct-GGUF, schema: '*q4_k_m.gguf' }
+          - { nome: llama3.2-3b, repo: bartowski/Llama-3.2-3B-Instruct-GGUF, schema: '*Q4_K_M.gguf' }
+          - { nome: gemma3-4b, repo: bartowski/google_gemma-3-4b-it-GGUF, schema: '*Q4_K_M.gguf' }
+          - { nome: qwen2.5-7b, repo: bartowski/Qwen2.5-7B-Instruct-GGUF, schema: '*Q4_K_M.gguf' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: llama.cpp (ultima versione, solo CPU)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p llama && cd llama
+          A=$(gh release view --repo ggml-org/llama.cpp --json assets --jq '.assets[].name' | grep -E 'bin-ubuntu-x64\.(zip|tar\.gz)$' | head -1 || true)
+          if [ -n "$A" ]; then
+            echo "pacchetto: $A"
+            gh release download --repo ggml-org/llama.cpp --pattern "$A"
+            case "$A" in *.zip) unzip -q "$A" ;; *) tar -xzf "$A" ;; esac
+          fi
+          S=$(find "$PWD" -name llama-server -type f | head -1)
+          if [ -z "$S" ]; then
+            echo "pacchetto non trovato: compilo"
+            git clone -q --depth 1 https://github.com/ggml-org/llama.cpp src
+            cmake -S src -B build -DLLAMA_CURL=OFF -DGGML_NATIVE=ON > /dev/null
+            cmake --build build -j4 --target llama-server > /dev/null
+            S=$(find "$PWD/build" -name llama-server -type f | head -1)
+          fi
+          chmod +x "$S"
+          echo "SERVER=$S" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$(dirname "$S"):${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+      - name: Modello ${{ matrix.nome }}
+        run: |
+          pip install -q huggingface_hub
+          python3 -c "from huggingface_hub import snapshot_download as d; d(repo_id='${{ matrix.repo }}', allow_patterns=['${{ matrix.schema }}'], local_dir='modello')"
+          ls -la modello
+          echo "MODELLO=$(ls modello/*.gguf | head -1)" >> "$GITHUB_ENV"
+      - name: Temi
+        run: |
+          "$SERVER" -m "$MODELLO" -c 4096 -t 4 -np 1 --port 8080 --jinja > server.log 2>&1 &
+          for i in $(seq 1 150); do curl -sf http://127.0.0.1:8080/health > /dev/null && break; sleep 2; done
+          curl -sf http://127.0.0.1:8080/health || { tail -30 server.log; exit 1; }
+          N=${{ inputs.temi || '45' }}
+          case "${{ matrix.nome }}" in *7b*) N=$(( N * 2 / 3 )) ;; esac
+          node tools/valuta/genera.js --server http://127.0.0.1:8080 --modello ${{ matrix.nome }} --n "$N" --out out/ai-${{ matrix.nome }}.jsonl --fine $(( $(date +%s) + 155 * 60 ))
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: valuta-ai-${{ matrix.nome }}
+          path: out/
+          retention-days: 7
+
+  rapporto:
+    needs: [umani-wikipedia, umani-mc4, genera]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: valuta-*
+          path: out
+          merge-multiple: true
+      - name: Rapporto
+        run: |
+          ls -la out
+          node tools/valuta/rapporto.js out > valutazione-ai.md
+          cat valutazione-ai.md
+      - name: Pubblica nel ramo "rapporti-ai"
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/rep/dati && cp valutazione-ai.md /tmp/rep/ && cp out/*.jsonl /tmp/rep/dati/
+          cd /tmp/rep
+          git init -q -b rapporti-ai
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Valutazione del rilevatore ${GITHUB_RUN_ID}"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" rapporti-ai
