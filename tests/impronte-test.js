@@ -17,9 +17,8 @@ const STOPS = 'il la di e che in un una per con del della nel sul non si'.split(
 function words(r, n) { const out = []; for (let i = 0; i < n; i++) out.push(r() < 0.3 ? STOPS[Math.floor(r() * STOPS.length)] : VOC[Math.floor(r() * VOC.length)] + (r() < 0.5 ? '' : String.fromCharCode(97 + Math.floor(r() * 26)))); return out; }
 const text = arr => arr.join(' ');
 
-// fetch finta che serve i file dell'indice, con o senza richieste parziali
-function fakeFetch(dir, opts) {
-  opts = opts || {};
+// fetch finta che serve i file dell'indice da disco, interi come un server statico
+function fakeFetch(dir) {
   const log = [];
   const fn = async (url, init) => {
     const u = new URL(url, 'https://x/');
@@ -27,12 +26,6 @@ function fakeFetch(dir, opts) {
     log.push({ url, range: init && init.headers && init.headers.Range });
     if (!fs.existsSync(file)) return { ok: false, status: 404, headers: { get: () => null } };
     const buf = fs.readFileSync(file);
-    const rg = init && init.headers && init.headers.Range;
-    if (rg && !opts.noRange) {
-      const m = /^bytes=(\d+)-(\d+)$/.exec(rg), s = +m[1], e = +m[2];
-      const part = buf.subarray(s, e + 1);
-      return { ok: true, status: 206, headers: { get: k => (k === 'Content-Length' ? String(part.length) : null) }, arrayBuffer: async () => part.buffer.slice(part.byteOffset, part.byteOffset + part.length), json: async () => JSON.parse(part.toString()) };
-    }
     return { ok: true, status: 200, headers: { get: k => (k === 'Content-Length' ? String(buf.length) : null) }, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length), json: async () => JSON.parse(buf.toString()) };
   };
   fn.log = log;
@@ -70,8 +63,8 @@ module.exports = async function (expect) {
     docs.push({ url: 'https://esempio.it/pagina-' + d, title: 'Pagina ' + d });
     R.addDoc(fpOf(text(boiler.concat(body, boiler))), d);
   }
-  const meta = scriviIndice(tmp, docs, R, { archivio: 'CC-PROVA', dfMax: 8, docShard: 100, maxFileBytes: 20000, siti: [{ dominio: 'esempio.it', documenti: 300 }] });
-  expect('indice scritto in più file, voci ripetute su molte pagine scartate', meta.files.length > 1 && meta.scartate > 0 && meta.voci > 0, meta.files.length + ' file, ' + meta.voci + ' voci, ' + meta.scartate + ' scartate, ' + meta.bits + ' bit');
+  const meta = scriviIndice(tmp, docs, R, { archivio: 'CC-PROVA', dfMax: 8, docShard: 100, bits: 8, siti: [{ dominio: 'esempio.it', documenti: 300 }] });
+  expect('indice scritto in file piccoli, voci ripetute su molte pagine scartate', meta.files === 256 && fs.readdirSync(path.join(tmp, 'fp')).length === 256 && meta.scartate > 0 && meta.voci > 0, meta.files + ' file, ' + meta.voci + ' voci, ' + meta.scartate + ' scartate, il più grande di ' + meta.maxFile + ' byte');
   const own = words(r, 150), copied = SRC.slice(200, 280), own2 = words(r, 150);
   const studText = text(own.concat(copied, own2, boiler));
   const toks = MR.tokenize(studText);
@@ -83,13 +76,13 @@ module.exports = async function (expect) {
   const p = top && top.passages.find(q => q.te > 150 && q.ti < 230);
   expect('passaggio ricostruito sulla parte copiata', p && top.passages.length === 1 && p.ti >= 150 && p.ti <= 150 + X.W && p.te <= 230 && p.te >= 230 - X.W, top && top.passages.map(q => q.ti + '-' + q.te).join(', ') + ' (copiato: 150-230)');
   expect('il menu ripetuto su tutte le pagine non dà corrispondenze', res.docs.length === 1, res.docs.map(d => d.url).join(', '));
-  const ranged = ff.log.filter(l => l.range);
-  expect('lette solo parti dei file, con richieste parziali', ranged.length >= 1 && ranged.length <= res.fingerprints, ranged.length + ' richieste parziali per ' + res.fingerprints + ' impronte');
+  const read = ff.log.filter(l => /\/fp\//.test(l.url));
+  expect('scaricati interi solo i file che servono, senza richieste parziali', read.length >= 1 && read.length <= res.fingerprints && read.length < 64 && !ff.log.some(l => l.range), read.length + ' file su 256 per ' + res.fingerprints + ' impronte');
   const excl = new Uint8Array(toks.length); for (let i = 150; i < 230; i++) excl[i] = 1;
   const resEx = await X.createIndex('/indice/', { fetch: fakeFetch(tmp) }).search(toks, excl, {});
   expect('le parti escluse (citazioni) non vengono cercate', resEx.docs.length === 0, resEx.docs.length);
-  const resNo = await X.createIndex('/indice/', { fetch: fakeFetch(tmp, { noRange: true }) }).search(toks, null, {});
-  expect('server senza richieste parziali: funziona con file piccoli', resNo.docs[0] && resNo.docs[0].url === 'https://esempio.it/pagina-137');
+  const big = scriviIndice(path.join(tmp, 'auto'), docs, R, { archivio: 'CC-PROVA' });
+  expect('numero di file scelto in base alla dimensione', big.bits >= 2 && big.maxFile < 30000, big.files + ' file, il più grande di ' + big.maxFile + ' byte');
   let err = null;
   try { await X.createIndex('/manca/', { fetch: fakeFetch(tmp) }).search(toks, null, {}); } catch (e) { err = e; }
   expect('indice assente: errore chiaro', err && err.kind === 'missing', err && err.kind);

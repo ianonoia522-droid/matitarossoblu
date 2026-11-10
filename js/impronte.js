@@ -68,9 +68,11 @@ var MRIndex = (function () {
     return winnow(A, w).map(i => ({ pos: i, a: A[i], b: B[i] }));
   }
 
-  // posizione nell'indice: i primi `bits` bit scelgono il secchio, i 32 successivi sono la chiave
-  function bucketOf(a, bits) { return a >>> (32 - bits); }
-  function keyOf(a, b, bits) { return ((a << bits) | (b >>> (32 - bits))) >>> 0; }
+  // posizione nell'indice. Il gruppo (file) si sceglie con il canale b: il canale a decide il winnowing, che tiene
+  // i valori minimi, quindi i suoi primi bit sono quasi sempre zero e affollerebbero i primi file.
+  // La chiave a 32 bit unisce i bit restanti di b con a.
+  function bucketOf(a, b, bits) { return b >>> (32 - bits); }
+  function keyOf(a, b, bits) { return (((b << bits) >>> 0) ^ a) >>> 0; }
 
   // passaggi ricostruiti: impronte vicine (distanza <= w) fanno parte dello stesso passaggio
   function passages(positions, k, w) {
@@ -88,12 +90,15 @@ var MRIndex = (function () {
   }
   function abortError() { const e = new Error('ricerca interrotta'); e.name = 'AbortError'; return e; }
 
-  // Ricerca nell'indice statico: meta.json, conteggi per secchio, voci di 7 byte (chiave 32 bit + documento 24 bit)
-  // lette con richieste parziali (HTTP Range), metadati dei documenti in file JSON da `docShard` voci.
+  // Ricerca nell'indice statico (formato 2): meta.json, un file per gruppo di impronte (i primi `bits` bit dell'hash),
+  // ognuno con voci di 7 byte ordinate per chiave (chiave 32 bit + documento 24 bit), metadati dei documenti in file
+  // JSON da `docShard` voci. Ogni file si scarica intero: niente richieste parziali, quindi funziona con qualsiasi
+  // server statico e con la compressione che GitHub Pages applica ai file.
+  function fileName(i, bits) { return 'fp/' + i.toString(16).padStart(Math.ceil(bits / 4), '0') + '.bin'; }
   function createIndex(base, env) {
     env = env || {};
     const doFetch = env.fetch || ((u, o) => fetch(u, o));
-    let meta = null, prefix = null;
+    let meta = null;
     const docCache = new Map();
 
     async function get(url, init, signal) {
@@ -107,78 +112,44 @@ var MRIndex = (function () {
     async function load(signal) {
       if (meta) return meta;
       const m = await (await get(base + 'meta.json', { cache: 'no-cache' }, signal)).json();
-      if (!m || m.formato !== 1) throw new IndexError('format', 'versione');
-      const buf = new Uint8Array(await (await get(base + m.dir + '?v=' + m.versione, null, signal)).arrayBuffer());
-      const nb = 1 << m.bits;
-      if (buf.length !== nb * 2) throw new IndexError('format', 'dir');
-      const p = new Float64Array(nb + 1);
-      for (let i = 0; i < nb; i++) p[i + 1] = p[i] + (buf[2 * i] | (buf[2 * i + 1] << 8));
-      prefix = p; meta = m;
+      if (!m || m.formato !== 2) throw new IndexError('format', 'versione');
+      meta = m;
       return m;
-    }
-    // byte da leggere per un insieme di secchi, uniti quando sono vicini nello stesso file
-    function plan(buckets) {
-      const reqs = [];
-      for (const b of buckets) {
-        const s = prefix[b], e = prefix[b + 1];
-        if (e <= s) continue;
-        const f = meta.files.find(x => s >= x.primo && s < x.primo + x.voci);
-        if (!f) throw new IndexError('format', 'file');
-        const from = (s - f.primo) * 7, to = (e - f.primo) * 7;
-        const last = reqs[reqs.length - 1];
-        if (last && last.f === f && from - last.to <= 4096) { last.to = to; last.buckets.push(b); }
-        else reqs.push({ f, from, to, buckets: [b] });
-      }
-      return reqs;
-    }
-    async function readRange(r, signal) {
-      const res = await get(base + r.f.nome + '?v=' + meta.versione, { headers: { Range: 'bytes=' + r.from + '-' + (r.to - 1) } }, signal);
-      if (res.status !== 206) {
-        // server senza richieste parziali: si accetta solo un file piccolo
-        const len = parseInt(res.headers.get('Content-Length') || '0', 10);
-        if (!len || len > 4 * 1024 * 1024) throw new IndexError('range', res.status);
-        return new Uint8Array(await res.arrayBuffer()).subarray(r.from, r.to);
-      }
-      return new Uint8Array(await res.arrayBuffer());
     }
     // impronte -> { idDocumento: [posizioni nel testo] }
     async function lookup(fps, signal, onProgress) {
       await load(signal);
       const bits = meta.bits, want = new Map();
       for (const f of fps) {
-        const b = bucketOf(f.a, bits);
-        let arr = want.get(b);
-        if (!arr) want.set(b, arr = []);
+        const i = bucketOf(f.a, f.b, bits);
+        let arr = want.get(i);
+        if (!arr) want.set(i, arr = []);
         arr.push({ key: keyOf(f.a, f.b, bits), pos: f.pos });
       }
-      const reqs = plan(Array.from(want.keys()).sort((x, y) => x - y));
-      const hits = new Map();
+      const files = Array.from(want.keys()), hits = new Map(), total = files.length;
       let done = 0;
       const worker = async () => {
         for (;;) {
-          const r = reqs.shift();
-          if (!r) return;
-          const bytes = await readRange(r, signal);
-          const base0 = prefix[r.buckets[0]];
-          for (const b of r.buckets) {
-            const off = (prefix[b] - base0) * 7, cnt = prefix[b + 1] - prefix[b];
-            const keyAt = j => (bytes[off + j * 7] | (bytes[off + j * 7 + 1] << 8) | (bytes[off + j * 7 + 2] << 16) | (bytes[off + j * 7 + 3] << 24)) >>> 0;
-            for (const q of want.get(b)) {
-              let lo = 0, hi = cnt;
-              while (lo < hi) { const mid = (lo + hi) >> 1; if (keyAt(mid) < q.key) lo = mid + 1; else hi = mid; }
-              for (let j = lo; j < cnt && keyAt(j) === q.key; j++) {
-                const o = off + j * 7 + 4, doc = bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16);
-                let arr = hits.get(doc);
-                if (!arr) hits.set(doc, arr = []);
-                arr.push(q.pos);
-              }
+          const i = files.shift();
+          if (i === undefined) return;
+          const bytes = new Uint8Array(await (await get(base + fileName(i, bits) + '?v=' + meta.versione, null, signal)).arrayBuffer());
+          const cnt = Math.floor(bytes.length / 7);
+          const keyAt = j => (bytes[j * 7] | (bytes[j * 7 + 1] << 8) | (bytes[j * 7 + 2] << 16) | (bytes[j * 7 + 3] << 24)) >>> 0;
+          for (const q of want.get(i)) {
+            let lo = 0, hi = cnt;
+            while (lo < hi) { const mid = (lo + hi) >> 1; if (keyAt(mid) < q.key) lo = mid + 1; else hi = mid; }
+            for (let j = lo; j < cnt && keyAt(j) === q.key; j++) {
+              const o = j * 7 + 4, doc = bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16);
+              let arr = hits.get(doc);
+              if (!arr) hits.set(doc, arr = []);
+              arr.push(q.pos);
             }
           }
           done++;
-          if (onProgress) onProgress(done, done + reqs.length);
+          if (onProgress) onProgress(done, total);
         }
       };
-      await Promise.all(Array.from({ length: Math.min(6, reqs.length) }, worker));
+      await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
       return { hits, requests: done };
     }
     async function docs(ids, signal) {
@@ -214,7 +185,7 @@ var MRIndex = (function () {
     return { load, lookup, docs, search, meta: () => meta };
   }
 
-  return { K, W, strHash, fmix, gramHashes, winnow, fingerprints, bucketOf, keyOf, passages, createIndex, IndexError };
+  return { K, W, strHash, fmix, gramHashes, winnow, fingerprints, bucketOf, keyOf, passages, fileName, createIndex, IndexError };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = MRIndex;

@@ -4,6 +4,11 @@ name: Costruzione dell'indice di impronte
 # Il risultato (solo impronte, indirizzi e titoli) va nel ramo "indice-build", da controllare prima della pubblicazione.
 on:
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Riusa le pagine già lette da questa esecuzione (vuoto: rileggi tutto)"
+        required: false
+        default: ''
   push:
     branches: [main]
     paths:
@@ -11,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: indice
@@ -42,6 +48,7 @@ jobs:
 
   sito:
     needs: piano
+    if: ${{ !inputs.run_id }}
     runs-on: ubuntu-latest
     timeout-minutes: 340
     strategy:
@@ -90,11 +97,13 @@ jobs:
           pattern: parziale-*
           path: lavoro
           merge-multiple: true
+          run-id: ${{ inputs.run_id || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Scrittura dell'indice
         run: |
           ls -la lavoro
           node tools/indice/costruisci.js unisci --lavoro lavoro --uscita uscita/indice --archivio ${{ needs.piano.outputs.archivio }} --data ${{ needs.piano.outputs.data }} --dal ${{ needs.piano.outputs.dal }}
-          du -sh uscita/indice; ls -la uscita/indice | head -20
+          du -sh uscita/indice; ls uscita/indice/fp | wc -l; cat uscita/indice/meta.json
       - name: Pubblica nel ramo "indice-build"
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}

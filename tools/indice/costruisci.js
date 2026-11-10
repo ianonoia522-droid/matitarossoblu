@@ -225,7 +225,7 @@ async function unisci() {
     log('unite', p, '· documenti', docs.length, '· impronte', R.n);
   }
   const m = scriviIndice(out, docs, R, { archivio: args.archivio || '', archivioData: args.data || '', archivioDal: typeof args.dal === 'string' ? args.dal : '', siti: Array.from(siti, ([dominio, documenti]) => ({ dominio, documenti })) });
-  log('indice:', m.documenti, 'documenti,', m.voci, 'voci,', m.scartate, 'scartate,', m.files.length, 'file,', m.bits, 'bit, secchio massimo', m.maxBucket);
+  log('indice:', m.documenti, 'documenti,', m.voci, 'voci,', m.scartate, 'scartate,', m.files, 'file di impronte (' + m.bits + ' bit), il più grande di', m.maxFile, 'byte');
   // verifica sull'indice appena scritto, con lo stesso codice di ricerca del browser
   const camp = fs.readdirSync(dir).filter(f => /^campioni-.+\.jsonl$/.test(f)).flatMap(f => fs.readFileSync(path.join(dir, f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)));
   const idx = X.createIndex('indice/', { fetch: fileFetch(out) });
