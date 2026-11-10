@@ -50,13 +50,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        parti: ['10-34', '35-59', '60-84', '85-109']
+        include:
+          - { parti: '0-9', temi: 150, studio: 300, web: 300 }
+          - { parti: '10-34', temi: 150, studio: 75, web: 0 }
+          - { parti: '35-59', temi: 150, studio: 75, web: 0 }
+          - { parti: '60-84', temi: 150, studio: 75, web: 0 }
+          - { parti: '85-109', temi: 150, studio: 75, web: 0 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node tools/valuta/umani.js mc4 --parti ${{ matrix.parti }} --n-temi 150 --n-studio 75 --n-web 0 --out out/umani-mc4-${{ matrix.parti }}.jsonl
+      - run: node tools/valuta/umani.js mc4 --parti ${{ matrix.parti }} --n-temi ${{ matrix.temi }} --n-studio ${{ matrix.studio }} --n-web ${{ matrix.web }} --out out/umani-mc4-${{ matrix.parti }}.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: valuta-umani-mc4-${{ matrix.parti }}
@@ -148,7 +153,12 @@ jobs:
             git fetch -q --depth 1 origin +refs/heads/rapporti-ai:refs/remotes/origin/rapporti-ai
             git archive refs/remotes/origin/rapporti-ai dati | tar -x -C tutti --strip-components=1 || true
           fi
+          # un campione umano nuovo sostituisce del tutto quello vecchio: tutti i testi umani misurati con la stessa
+          # versione del rilevatore
+          if ls out/umani-*.jsonl > /dev/null 2>&1; then rm -f tutti/umani-*.jsonl; fi
           cp out/*.jsonl tutti/ 2>/dev/null || true
+          # i temi generati hanno il testo: i segnali si ricalcolano con la versione attuale del rilevatore
+          node tools/valuta/ricalcola.js tutti tutti-ora && rm -rf tutti && mv tutti-ora tutti
           ls -la tutti
           node tools/valuta/rapporto.js tutti > valutazione-ai.md
           cat valutazione-ai.md

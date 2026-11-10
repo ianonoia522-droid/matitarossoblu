@@ -9,7 +9,7 @@ function segnali(testo) {
   const sig = {};
   for (const s of r.signals) sig[s.id] = { x: r4(s.x), s: r4(s.score), ok: s.ok };
   return {
-    parole: r.words, frasi: r.nProse, lingua: r.lang, indice: r.index, indiceSenzaUmano: r.indexNoHuman,
+    parole: r.words, frasi: r.nProse, lingua: r.lang, indice: r.index, indiceGrezzo: r.indexRaw === null ? null : r4(r.indexRaw), indiceSenzaUmano: r.indexNoHuman,
     base: r.base === null ? null : r4(r.base), h: r4(r.h), hRate: r4(r.hRate), mkPts: r.mkPts, md: r.md, inv: r.inv,
     residui: r.strongRes, fascia: r.band, sig,
   };

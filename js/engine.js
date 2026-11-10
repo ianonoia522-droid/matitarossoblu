@@ -563,6 +563,14 @@ var MR = (function () {
   const avg = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
   const sdev = (a, m) => (a.length ? Math.sqrt(a.reduce((x, y) => x + (y - m) * (y - m), 0) / a.length) : 0);
 
+  // Taratura delle fasce: l'indice grezzo viene riscalato (in modo crescente, quindi l'ordine dei testi non cambia)
+  // perché il confine di «segnali misti» (35) e quello di «molti segnali» (60) cadano dove li supera solo una piccola
+  // quota dei temi scritti da persone nei campioni di prova (tools/valuta). Con T_MID = 35 e T_HI = 60 non cambia nulla.
+  const T_MID = 35, T_HI = 60;
+  function taratura(v) {
+    return v <= T_MID ? v * 35 / T_MID : v <= T_HI ? 35 + (v - T_MID) * 25 / (T_HI - T_MID) : 60 + (v - T_HI) * 40 / (100 - T_HI);
+  }
+
   function analyzeAI(raw) {
     const text = unwrapIfHardWrapped(raw);
     const toks = tokenize(text), words = toks.length;
@@ -668,7 +676,8 @@ var MR = (function () {
 
     // imperfezioni tipiche della scrittura a mano
     const human = {
-      dbl: count(/[^\s] {2,}(?=[^\s])/g, text),
+      // due spazi dopo il punto sono un'abitudine (anche di alcuni modelli), non una svista: contano solo in mezzo alla frase
+      dbl: count(/[^\s.!?:;…] {2,}(?=[^\s])/g, text),
       nospace: count(/[,;](?=\p{L})|[.!?](?=\p{Lu}\p{Ll})/gu, text),
       spBefore: count(/[\p{L}\p{N}] +[,.;:!?](?=\s|$)/gu, text),
       lowerAfter: 0,
@@ -697,9 +706,10 @@ var MR = (function () {
     if (ok150 && usable.length >= 3) { let sw = 0, ss = 0; for (const x of usable) { sw += x.w; ss += x.w * x.score; } base = ss / sw; }
     const strongRes = residue.filter(r => r.strong).reduce((a, r) => a + r.n, 0);
     const rr = Math.min(1, 0.5 * strongRes + (inv > 0 ? 0.25 : 0) + (md >= 3 ? 0.15 : 0));
-    const fin = v => Math.round(clamp(v + (1 - v) * 0.6 * rr) * 100);
-    const index = base === null ? null : fin(base * (1 - 0.5 * h));
-    const indexNoHuman = base === null ? null : fin(base);
+    const grezzo = v => clamp(v + (1 - v) * 0.6 * rr) * 100;
+    const indexRaw = base === null ? null : grezzo(base * (1 - 0.5 * h));
+    const index = base === null ? null : Math.round(taratura(indexRaw));
+    const indexNoHuman = base === null ? null : Math.round(taratura(grezzo(base)));
     const band = index === null ? 'na' : index < 35 ? 'lo' : index < 60 ? 'mid' : 'hi';
     const qty = words < 150 ? 'insufficiente' : words < 400 ? 'scarsa' : words < 1000 ? 'sufficiente' : 'buona';
 
@@ -716,7 +726,7 @@ var MR = (function () {
       s.why = why;
     }
     // x: valore grezzo di ogni segnale (per la taratura su testi di prova), score: contributo tra 0 e 1
-    return { lang, words, nSent: SX.length, nProse: prose.length, mean, base, h, hRate, human, index, indexNoHuman, band, qty, signals: S, residue, dialogue, sentences: SX, mkPts, md, inv, strongRes };
+    return { lang, words, nSent: SX.length, nProse: prose.length, mean, base, h, hRate, human, index, indexRaw, indexNoHuman, band, qty, signals: S, residue, dialogue, sentences: SX, mkPts, md, inv, strongRes };
   }
 
   return { foldWord, tokenize, countWords, tokAt, stem, isContent, splitSentences, prepText, analyzePlagiarism, fingerprints, wikiQueries, detectLang, lcsMask, analyzeAI };

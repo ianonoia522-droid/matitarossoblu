@@ -76,6 +76,21 @@ for (const fp of [0.05, 0.01]) {
 }
 L.push('');
 
+// soglie sull'indice grezzo (prima della taratura delle fasce in engine.js): servono a scegliere T_MID e T_HI
+const grz = rows => rows.map(r => r.indiceGrezzo).filter(v => v !== null && v !== undefined);
+if (grz(umani).length) {
+  const quant = (v, fp) => { const s = v.slice().sort((a, b) => b - a); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * fp))] : null; };
+  L.push('## Soglie sull\'indice grezzo', '', 'Valore dell\'indice grezzo superato dal 5% e dall\'1% dei testi di ogni gruppo umano, e quota dei testi generati che lo supera. Servono a tarare le fasce (T_MID e T_HI in engine.js).', '');
+  L.push('| gruppo umano | testi | soglia 5% | generati sopra | soglia 1% | generati sopra |', '|---|---|---|---|---|---|');
+  const ag = grz(ai);
+  for (const [g, rows] of per(umani, 'gruppo').concat([['**tutti gli umani**', umani]])) {
+    const v = grz(rows); if (!v.length) continue;
+    const t5 = quant(v, 0.05), t1 = quant(v, 0.01);
+    L.push('| ' + g + ' | ' + v.length + ' | ' + num(t5, 1) + ' | ' + pct(ag.filter(x => x > t5).length, ag.length) + ' | ' + num(t1, 1) + ' | ' + pct(ag.filter(x => x > t1).length, ag.length) + ' |');
+  }
+  L.push('');
+}
+
 L.push('## Segnali uno per uno', '', 'AUC del valore grezzo di ogni segnale (sopra 0,5: più alto nei testi generati; sotto 0,5: più alto in quelli umani), e mediane. Solo testi in cui il segnale è calcolabile.', '');
 L.push('| segnale | AUC | mediana umani | mediana generati | punteggio medio umani | punteggio medio generati |', '|---|---|---|---|---|---|');
 const ids = ['burst', 'mk', 'conn', 'para', 'dash', 'contrast', 'trip', 'spec'];
