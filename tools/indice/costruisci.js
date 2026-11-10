@@ -21,6 +21,15 @@ const UA = 'MatitaRossoblu-indice/0.1 (+https://github.com/ianonoia522-droid/mat
 const args = (() => { const a = {}, v = process.argv.slice(3); for (let i = 0; i < v.length; i++) if (v[i].startsWith('--')) a[v[i].slice(2)] = v[i + 1] && !v[i + 1].startsWith('--') ? v[++i] : true; return a; })();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...m) => console.error(new Date().toISOString().slice(11, 19), ...m);
+// righe JSON di un file, nell'ordine (la posizione conta): null per una riga illeggibile, come l'ultima di una
+// corsa interrotta a metà scrittura; il file mancante vale vuoto
+function righe(f) {
+  if (!fs.existsSync(f)) return [];
+  const t = fs.readFileSync(f, 'utf8'), out = [];
+  if (!t) return out;
+  for (const ln of (t.endsWith('\n') ? t.slice(0, -1) : t).split('\n')) { if (!ln) { out.push(null); continue; } try { out.push(JSON.parse(ln)); } catch (e) { out.push(null); } }
+  return out;
+}
 
 async function fetchRetry(url, init, tries) {
   let delay = 2000;
@@ -169,7 +178,7 @@ async function scarica() {
     const dir = path.join(dati, 'parti', dom);
     const fatti = new Set();
     if (fs.existsSync(dir)) for (const g of fs.readdirSync(dir)) {
-      if (/^[^-]+\.jsonl$/.test(g)) for (const ln of fs.readFileSync(path.join(dir, g), 'utf8').split('\n')) { if (!ln) continue; const d = JSON.parse(ln); fatti.add(d.url); if (d.h) seenText.add(d.h); }
+      if (/^[^-]+\.jsonl$/.test(g)) for (const d of righe(path.join(dir, g))) { if (!d) continue; fatti.add(d.url); if (d.h) seenText.add(d.h); }
       if (/-saltati\.txt$/.test(g)) for (const u of fs.readFileSync(path.join(dir, g), 'utf8').split('\n')) if (u) fatti.add(u);
     }
     const max = +(args['max-' + dom] || args.max || 1e9);
@@ -184,15 +193,22 @@ async function scarica() {
   const queue = [];
   for (let i = 0; code.some(c => i < c.todo.length); i++) for (const c of code) if (i < c.todo.length) queue.push({ dom: c.dom, r: c.todo[i], tries: 0 });
   log('in coda', queue.length, 'pagine, ritmo', ritmo, 'al secondo, fine', new Date(fine).toISOString().slice(11, 16));
+  // file di uscita per sito: sempre nuovi (una corsa ripetuta con lo stesso tag non tocca quelli già salvati)
+  // e divisi oltre --max-parte byte, perché GitHub rifiuta i file oltre 100 MB
+  const maxParte = +(args['max-parte'] || 40e6);
   const out = new Map();
+  const apri = (dom, k) => {
+    const dir = path.join(dati, 'parti', dom); fs.mkdirSync(dir, { recursive: true });
+    let nome;
+    for (;; k++) { nome = tag + (k ? '_' + k : ''); if (!['.bin', '.jsonl', '-saltati.txt'].some(e => fs.existsSync(path.join(dir, nome + e)))) break; }
+    return { k, n: 0, bytes: 0, fp: fs.openSync(path.join(dir, nome + '.bin'), 'w'), doc: fs.openSync(path.join(dir, nome + '.jsonl'), 'w'),
+      camp: fs.openSync(path.join(dir, nome + '-campioni.jsonl'), 'w'), salt: fs.openSync(path.join(dir, nome + '-saltati.txt'), 'w') };
+  };
+  const chiudi = o => { for (const k of ['fp', 'doc', 'camp', 'salt']) fs.closeSync(o[k]); };
   const outFor = dom => {
     let o = out.get(dom);
-    if (!o) {
-      const dir = path.join(dati, 'parti', dom); fs.mkdirSync(dir, { recursive: true });
-      o = { n: 0, fp: fs.openSync(path.join(dir, tag + '.bin'), 'a'), doc: fs.openSync(path.join(dir, tag + '.jsonl'), 'a'),
-        camp: fs.openSync(path.join(dir, tag + '-campioni.jsonl'), 'a'), salt: fs.openSync(path.join(dir, tag + '-saltati.txt'), 'a') };
-      out.set(dom, o);
-    }
+    if (o && o.bytes > maxParte) { chiudi(o); o = null; }
+    if (!o) { const prev = out.get(dom); o = apri(dom, prev ? prev.k + 1 : 0); out.set(dom, o); }
     return o;
   };
   const cache = new Map();
@@ -247,6 +263,7 @@ async function scarica() {
     let off = 8;
     for (const f of uniq.values()) { rec.writeUInt32LE(f.a, off); rec.writeUInt32LE(f.b, off + 4); off += 8; }
     fs.writeSync(o.fp, rec);
+    o.bytes += rec.length;
     fs.writeSync(o.doc, JSON.stringify({ url: r.url, title: title.slice(0, 160), parole: toks.length, h: th }) + '\n');
     // verifica: per circa una pagina su 400 le impronte (non il testo) di estratti di 40 e 80 parole
     if (h(r.url) % 400 === 7 && toks.length >= 140) {
@@ -266,7 +283,7 @@ async function scarica() {
     }
   }
   await Promise.all(Array.from({ length: conc }, worker));
-  for (const o of out.values()) for (const k of ['fp', 'doc', 'camp', 'salt']) fs.closeSync(o[k]);
+  for (const o of out.values()) chiudi(o);
   log('fine: lette', ok, '· saltate', saltate, '· limiti', limiti, '· restano', queue.length, '·', Math.round(bytes / 1e6) + ' MB in', Math.round((Date.now() - t0) / 60000), 'min');
   fs.writeFileSync(path.join(args.dati, 'ultima-corsa.json'), JSON.stringify({ tag, lette: ok, saltate, limiti, restano: queue.length, ritmo, minuti: Math.round((Date.now() - t0) / 60000) }, null, 1));
 }
@@ -279,7 +296,7 @@ async function unisci() {
   for (const dom of (fs.existsSync(base) ? fs.readdirSync(base).sort() : [])) {
     for (const f of fs.readdirSync(path.join(base, dom)).filter(g => /^[^-]+\.bin$/.test(g)).sort()) {
       const tag = f.slice(0, -4);
-      const meta = fs.readFileSync(path.join(base, dom, tag + '.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+      const meta = righe(path.join(base, dom, tag + '.jsonl'));
       const buf = fs.readFileSync(path.join(base, dom, f));
       let o = 0;
       while (o + 8 <= buf.length) {
@@ -291,7 +308,7 @@ async function unisci() {
         siti.set(dom, (siti.get(dom) || 0) + 1);
       }
       const cf = path.join(base, dom, tag + '-campioni.jsonl');
-      if (fs.existsSync(cf)) for (const ln of fs.readFileSync(cf, 'utf8').split('\n')) if (ln) camp.push(JSON.parse(ln));
+      if (fs.existsSync(cf)) for (const c of righe(cf)) if (c) camp.push(c);
     }
     log('unito', dom, '· documenti', docs.length, '· impronte', R.n);
   }
