@@ -1,62 +1,45 @@
 name: Costruzione dell'indice di impronte
 
-# Avvio manuale, oppure con una modifica a tools/indice/siti.json.
-# Il risultato (solo impronte, indirizzi e titoli) va nel ramo "indice-build", da controllare prima della pubblicazione.
+# Lenta e riprendibile. Ogni corsa legge pagine da Common Crawl al ritmo che il suo firewall consente (una macchina,
+# 1,5 richieste al secondo, pause quando arriva un rifiuto), salva le impronte nel ramo "indice-dati" e riscrive
+# l'indice completo nel ramo "indice-build". La corsa notturna continua da dove si era fermata la precedente.
 on:
   workflow_dispatch:
     inputs:
-      run_id:
-        description: "Riusa le pagine già lette da questa esecuzione (vuoto: rileggi tutto)"
+      minuti:
+        description: "Minuti di lettura delle pagine in questa corsa"
         required: false
-        default: ''
-  push:
-    branches: [main]
-    paths:
-      - tools/indice/siti.json
+        default: '270'
+      elenchi:
+        description: "Rifare gli elenchi delle pagine di tutti i siti (si/no)"
+        required: false
+        default: 'no'
+  schedule:
+    - cron: '17 1 * * *'
 
 permissions:
   contents: write
-  actions: read
 
 concurrency:
   group: indice
   cancel-in-progress: false
 
 jobs:
-  piano:
+  costruisci:
     runs-on: ubuntu-latest
-    outputs:
-      matrice: ${{ steps.m.outputs.matrice }}
-      archivi: ${{ steps.m.outputs.archivi }}
-      archivio: ${{ steps.m.outputs.archivio }}
-      data: ${{ steps.m.outputs.data }}
-      dal: ${{ steps.m.outputs.dal }}
+    timeout-minutes: 350
+    env:
+      REPO_URL: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
     steps:
+      - name: Inizio
+        run: echo "INIZIO=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
-      - id: m
+      - name: Dati delle corse precedenti (ramo indice-dati)
         run: |
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          import json
-          c = json.load(open('tools/indice/siti.json'))
-          print('matrice=' + json.dumps({'include': c['siti']}))
-          a = c['archivi']
-          print('archivi=' + ','.join(a))
-          print('archivio=' + (a[0] if len(a) == 1 else a[-1] + '..' + a[0]))
-          print('data=' + c['data'])
-          print('dal=' + c.get('dal', c['data']))
-          EOF
-
-  sito:
-    needs: piano
-    if: ${{ !inputs.run_id }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 340
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix: ${{ fromJSON(needs.piano.outputs.matrice) }}
-    steps:
-      - uses: actions/checkout@v4
+          git clone -q --depth 1 --branch indice-dati "$REPO_URL" dati || { mkdir -p dati && git -C dati init -q -b indice-dati && git -C dati remote add origin "$REPO_URL"; }
+          mkdir -p dati/elenchi dati/parti
+          git -C dati config user.name "github-actions[bot]"
+          git -C dati config user.email "41898282+github-actions[bot]@users.noreply.github.com"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -66,52 +49,61 @@ jobs:
       - run: |
           npm ci --no-audit --no-fund --prefix tools/indice
           pip install duckdb==1.5.6
-      - name: Elenco delle pagine (indice a colonne di Common Crawl)
+      - name: Elenchi delle pagine (solo per i siti che non ce l'hanno ancora)
         run: |
-          mkdir -p lavoro
-          python3 tools/indice/elenca_colonne.py ${{ needs.piano.outputs.archivi }} ${{ matrix.dominio }} ${{ matrix.modo }} lavoro/grezzo-${{ matrix.dominio }}.jsonl
-          node tools/indice/costruisci.js elenca --da lavoro/grezzo-${{ matrix.dominio }}.jsonl --archivio ${{ needs.piano.outputs.archivio }} --dominio ${{ matrix.dominio }} --modo ${{ matrix.modo }} --filtro "${{ matrix.filtro }}" --lavoro lavoro
-      - name: Lettura delle pagine e impronte
-        run: node tools/indice/costruisci.js scarica --dominio ${{ matrix.dominio }} --lavoro lavoro --max ${{ matrix.max }} --concorrenza 6
-      - uses: actions/upload-artifact@v4
-        with:
-          name: parziale-${{ matrix.dominio }}
-          path: |
-            lavoro/parziale-*.bin
-            lavoro/documenti-*.jsonl
-            lavoro/campioni-*.jsonl
-          retention-days: 7
-
-  unisci:
-    needs: [piano, sito]
-    if: always() && needs.piano.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: parziale-*
-          path: lavoro
-          merge-multiple: true
-          run-id: ${{ inputs.run_id || github.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Scrittura dell'indice
-        run: |
-          ls -la lavoro
-          node tools/indice/costruisci.js unisci --lavoro lavoro --uscita uscita/indice --archivio ${{ needs.piano.outputs.archivio }} --data ${{ needs.piano.outputs.data }} --dal ${{ needs.piano.outputs.dal }}
-          du -sh uscita/indice; ls uscita/indice/fp | wc -l; cat uscita/indice/meta.json
-      - name: Pubblica nel ramo "indice-build"
+          export SOLO=$(python3 - <<'PY'
+          import json, os
+          c = json.load(open('tools/indice/siti.json'))
+          tutti = os.environ.get('RIFAI') == 'si'
+          print(','.join(s['dominio'] for s in c['siti'] if tutti or not os.path.exists('dati/elenchi/elenco-%s.jsonl' % s['dominio'])))
+          PY
+          )
+          echo "Siti da elencare: ${SOLO:-nessuno}"
+          if [ -n "$SOLO" ]; then
+            python3 tools/indice/elenca_colonne.py --tutti tools/indice/siti.json grezzi "$SOLO"
+            python3 - <<'PY' > elenca.sh
+          import json, os, shlex
+          c = json.load(open('tools/indice/siti.json'))
+          solo = set(os.environ['SOLO'].split(','))
+          for s in c['siti']:
+              if s['dominio'] not in solo:
+                  continue
+              g = 'grezzi/grezzo-%s.jsonl' % s['dominio']
+              print('touch %s && node tools/indice/costruisci.js elenca --da %s --dominio %s --modo %s --filtro %s --lavoro dati/elenchi' % (
+                  g, g, s['dominio'], s['modo'], shlex.quote(s.get('filtro', '')) if s.get('filtro') else '""'))
+          PY
+            bash -e elenca.sh
+            echo "Pausa di 5 minuti prima di leggere le pagine (finestra del firewall di Common Crawl)"
+            sleep 300
+          fi
         env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RIFAI: ${{ inputs.elenchi }}
+      - name: Lettura delle pagine
+        run: |
+          FINE=$(( (INIZIO + 315 * 60) * 1000 ))
+          LIM=$(( ($(date +%s) + ${MINUTI:-270} * 60) * 1000 ))
+          [ "$LIM" -lt "$FINE" ] && FINE=$LIM
+          node tools/indice/costruisci.js scarica --dati dati --tag "${GITHUB_RUN_ID}" --ritmo 1.5 --concorrenza 2 --max 60000 --fine "$FINE"
+          cat dati/ultima-corsa.json
+        env:
+          MINUTI: ${{ inputs.minuti }}
+      - name: Unione e scrittura dell'indice
+        run: |
+          read -r ARCH DATA DAL < <(python3 -c "import json; c=json.load(open('tools/indice/siti.json')); a=c['archivi']; print(a[-1]+'..'+a[0], c['data'], c.get('dal', c['data']))")
+          node tools/indice/costruisci.js unisci --dati dati --uscita uscita/indice --archivio "$ARCH" --data "$DATA" --dal "$DAL"
+          du -sh uscita/indice; ls uscita/indice/fp | wc -l; cat uscita/indice/meta.json
+      - name: Salva i dati nel ramo "indice-dati"
+        run: |
+          cd dati
+          git add -A
+          git commit -q -m "Pagine lette nella corsa ${GITHUB_RUN_ID}" || echo "niente di nuovo"
+          git push -q origin indice-dati
+      - name: Pubblica l'indice nel ramo "indice-build"
         run: |
           cd uscita
           git init -q -b indice-build
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add indice
-          git commit -q -m "Indice di impronte ${{ needs.piano.outputs.archivio }} (run ${GITHUB_RUN_ID})"
-          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" indice-build
+          git commit -q -m "Indice di impronte (corsa ${GITHUB_RUN_ID})"
+          git push -q -f "$REPO_URL" indice-build
