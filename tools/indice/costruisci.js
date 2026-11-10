@@ -36,37 +36,47 @@ async function fetchRetry(url, init, tries) {
   }
 }
 
-// ---------- elenco delle pagine dall'indice CDX di Common Crawl ----------
+// ---------- elenco delle pagine ----------
+// Fonte: un file di righe in formato CDX (--da, prodotto da elenca_colonne.py dall'indice a colonne di Common Crawl)
+// oppure, in mancanza, il server CDX index.commoncrawl.org. Si tengono le pagine HTML in italiano con stato 200,
+// ammesse dal robots.txt attuale del sito e dal filtro facoltativo; per ogni indirizzo la cattura più recente.
 async function elenca() {
   const archivio = args.archivio, dom = args.dominio, modo = args.modo || 'domain', dir = args.lavoro;
   fs.mkdirSync(dir, { recursive: true });
-  const base = 'https://index.commoncrawl.org/' + archivio + '-index?url=' + encodeURIComponent(dom) + '&matchType=' + modo;
-  const info = JSON.parse((await (await fetchRetry(base + '&showNumPages=true')).text()).trim().split('\n').pop());
-  const pages = +info.pages || 0;
-  log(dom, 'pagine CDX', pages);
   const robots = await robotsFor(dom);
   const filtro = typeof args.filtro === 'string' && args.filtro ? new RegExp(args.filtro) : null;
   const best = new Map();
   let lines = 0, kept = 0, blocked = 0;
-  for (let p = 0; p < pages; p++) {
-    const res = await fetchRetry(base + '&output=json&page=' + p);
-    if (res.status === 404) break;
-    if (!res.ok) throw new Error('CDX pagina ' + p + ': ' + res.status);
-    for (const ln of (await res.text()).split('\n')) {
-      if (!ln) continue;
-      lines++;
-      let r; try { r = JSON.parse(ln); } catch (e) { continue; }
-      const mime = r['mime-detected'] || r.mime || '';
-      if (r.status !== '200' || !/html/.test(mime) || !/ita/.test(r.languages || '')) continue;
-      if (filtro && !filtro.test(r.url)) continue;
-      if (robots && !robots.isAllowed(r.url, 'CCBot')) { blocked++; continue; }
-      const key = r.url.replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, '');
-      const prev = best.get(key);
-      if (!prev || r.timestamp > prev.timestamp) best.set(key, { url: r.url, filename: r.filename, offset: +r.offset, length: +r.length, timestamp: r.timestamp });
-      kept++;
+  const consider = (ln) => {
+    if (!ln) return;
+    lines++;
+    let r; try { r = JSON.parse(ln); } catch (e) { return; }
+    const mime = r['mime-detected'] || r.mime || '';
+    if (String(r.status) !== '200' || !/html/.test(mime) || !/ita/.test(r.languages || '')) return;
+    if (filtro && !filtro.test(r.url)) return;
+    if (robots && !robots.isAllowed(r.url, 'CCBot')) { blocked++; return; }
+    const key = r.url.replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, '');
+    const prev = best.get(key);
+    if (!prev || r.timestamp > prev.timestamp) best.set(key, { url: r.url, filename: r.filename, offset: +r.offset, length: +r.length, timestamp: r.timestamp });
+    kept++;
+  };
+  if (typeof args.da === 'string') {
+    for (const ln of fs.readFileSync(args.da, 'utf8').split('\n')) consider(ln);
+  } else {
+    const base = 'https://index.commoncrawl.org/' + archivio + '-index?url=' + encodeURIComponent(dom) + '&matchType=' + modo;
+    const first = await fetchRetry(base + '&showNumPages=true');
+    const body = await first.text();
+    if (!first.ok) throw new Error('server CDX: stato ' + first.status + ' ' + body.slice(0, 80));
+    const pages = +JSON.parse(body.trim().split('\n').pop()).pages || 0;
+    log(dom, 'pagine CDX', pages);
+    for (let p = 0; p < pages; p++) {
+      const res = await fetchRetry(base + '&output=json&page=' + p);
+      if (res.status === 404) break;
+      if (!res.ok) throw new Error('CDX pagina ' + p + ': ' + res.status);
+      for (const ln of (await res.text()).split('\n')) consider(ln);
+      if (p % 10 === 9) log(dom, 'pagina', p + 1, 'di', pages, '·', best.size, 'indirizzi');
+      await sleep(800);
     }
-    if (p % 10 === 9) log(dom, 'pagina', p + 1, 'di', pages, '·', best.size, 'indirizzi');
-    await sleep(800);
   }
   const out = path.join(dir, 'elenco-' + dom + '.jsonl');
   fs.writeFileSync(out, Array.from(best.values()).map(x => JSON.stringify(x)).join('\n') + '\n');
