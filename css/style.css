@@ -225,6 +225,7 @@ sup.fn{font:600 10px/1 var(--f-mono);color:var(--sc);padding:0 2px 0 1px}
 .band.lo{background:var(--ok-soft);color:var(--ok)}.band.mid{background:var(--warn-soft);color:var(--warn)}.band.hi{background:var(--rosso-soft);color:var(--rosso)}.band.na{background:var(--rule-2);color:var(--ink-2)}
 .g-lbl{margin:0;font-size:14px;color:var(--ink-2);max-width:46ch}
 .g-lbl b{color:var(--ink);font-weight:600}
+.g-prova{margin:0;font-size:13px;line-height:1.45;color:var(--ink-2);max-width:52ch}
 .g-side{display:flex;flex-direction:column;gap:18px;min-width:0}
 .scale-wrap{position:relative;padding-top:8px}
 .scale{display:flex;height:10px;border-radius:5px;overflow:hidden}

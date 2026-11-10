@@ -650,6 +650,12 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
 
   // Segnali AI
   const BAND_TXT = { lo: 'Pochi segnali tipici dei testi generati', mid: 'Segnali misti', hi: 'Molti segnali tipici dei testi generati', na: 'Testo troppo breve per un indice' };
+  // Misure della valutazione del rilevatore (tools/valuta; rapporto completo nel ramo rapporti-ai), da aggiornare
+  // insieme a T_MID e T_HI in engine.js: quote di testi umani e generati che arrivano almeno a ogni fascia.
+  const PROVA = { umani: 0, generati: 0, mid: ['', ''], hi: ['', ''] };
+  const PROVA_URL = 'https://github.com/ianonoia522-droid/matitarossoblu/blob/rapporti-ai/valutazione-ai.md';
+  const conArt = p => (/^(?:0|8)/.test(p) ? (p[0] === '0' ? 'lo ' : 'l\'') : /^1(?:1)?(?:,|$)/.test(p) ? 'l\'' : 'il ') + p + '%';
+  const provaTxt = () => 'Nelle prove, su ' + fmtInt(PROVA.umani) + ' testi scritti da persone prima del 2022 e ' + fmtInt(PROVA.generati) + ' temi generati: arriva a «segnali misti» o oltre ' + conArt(PROVA.mid[0]) + ' dei testi umani e ' + conArt(PROVA.mid[1]) + ' dei generati, a «molti segnali» ' + conArt(PROVA.hi[0]) + ' dei testi umani e ' + conArt(PROVA.hi[1]) + ' dei generati.';
   const QTY_TXT = { insufficiente: 'insufficiente', scarsa: 'scarsa, indice instabile', sufficiente: 'sufficiente', buona: 'buona' };
   function humanLine(ai) {
     const H = ai.human, parts = [];
@@ -697,7 +703,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     const ai = state.ai, pane = el.panes.ai;
     const hl = humanLine(ai);
     const drop = ai.index !== null && ai.indexNoHuman !== null ? ai.indexNoHuman - ai.index : 0;
-    let html = '<div class="ai-sum"><div class="gauge"><div class="g-num"><span class="fig rosso">' + (ai.index === null ? '–' : ai.index) + '</span><span class="of">/100</span></div><span class="band ' + ai.band + '">' + BAND_TXT[ai.band] + '</span><p class="g-lbl">Indice di somiglianza con lo stile dei testi generati. <b>Non è una probabilità e da solo non prova nulla.</b></p></div>';
+    let html = '<div class="ai-sum"><div class="gauge"><div class="g-num"><span class="fig rosso">' + (ai.index === null ? '–' : ai.index) + '</span><span class="of">/100</span></div><span class="band ' + ai.band + '">' + BAND_TXT[ai.band] + '</span><p class="g-lbl">Indice di somiglianza con lo stile dei testi generati. <b>Non è una probabilità e da solo non prova nulla.</b></p>' + (PROVA.umani ? '<p class="g-prova">' + esc(provaTxt()) + ' <a href="' + PROVA_URL + '" target="_blank" rel="noopener noreferrer">Come è stato misurato</a></p>' : '') + '</div>';
     html += '<div class="g-side"><div class="scale-wrap" aria-hidden="true"><div class="scale"><i class="z1"></i><i class="z2"></i><i class="z3"></i></div>' + (ai.index !== null ? '<span class="marker" data-left="' + ai.index + '"></span>' : '') + '<div class="scale-lbl"><span class="z1">pochi segnali</span><span class="z2">misti</span><span class="z3">molti</span></div></div>';
     html += '<dl class="facts"><div><dt>Quantità di testo</dt><dd>' + QTY_TXT[ai.qty] + ' · ' + fmtInt(ai.words) + ' parole, ' + ai.nProse + ' frasi</dd></div><div><dt>Lingua rilevata</dt><dd>' + (ai.lang === 'en' ? 'inglese, formule inglesi' : 'italiano, formule italiane') + '</dd></div>' + (ai.dialogue >= 3 ? '<div><dt>Dialoghi</dt><dd>' + ai.dialogue + ' battute: i trattini a inizio battuta non contano</dd></div>' : '') + '</dl></div></div>';
     if (ai.residue.length) {
@@ -772,7 +778,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
       h += '<h3>Testo marcato</h3><div class="doc">' + markedDocHTML().replace(/ data-key="[^"]*"/g, '') + '</div>';
     }
     h += '<h2>Segnali di scrittura generata</h2>';
-    h += ai.index === null ? '<p>Testo troppo breve per calcolare l\'indice: servono almeno 150 parole.</p>' : '<p><span class="big">' + ai.index + '</span> /100 · ' + esc(BAND_TXT[ai.band]) + ' · quantità di testo ' + esc(QTY_TXT[ai.qty]) + '</p>';
+    h += ai.index === null ? '<p>Testo troppo breve per calcolare l\'indice: servono almeno 150 parole.</p>' : '<p><span class="big">' + ai.index + '</span> /100 · ' + esc(BAND_TXT[ai.band]) + ' · quantità di testo ' + esc(QTY_TXT[ai.qty]) + '</p>' + (PROVA.umani ? '<p class="meta">' + esc(provaTxt()) + '</p>' : '');
     h += '<table><thead><tr><th>Segnale</th><th>Valore</th><th>Contributo</th><th>Peso</th></tr></thead><tbody>' + ai.signals.map(s => '<tr><td>' + esc(s.name) + '</td><td>' + (s.ok ? esc(s.value + ' · ' + s.unit) : 'non valutato: ' + esc(s.need)) + '</td><td>' + (s.ok ? Math.round(s.score * 100) + '%' : '–') + '</td><td>' + NF1.format(s.w) + '</td></tr>').join('') + '</tbody></table>';
     if (ai.residue.length) h += '<h3>Tracce di copia-incolla</h3><ul>' + ai.residue.map(x => '<li>' + esc(x.label) + ': ' + x.n + '</li>').join('') + '</ul>';
     const hl = humanLine(ai);
@@ -795,6 +801,7 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     }
     L.push('', 'SEGNALI AI');
     L.push(ai.index === null ? '- indice non calcolato: servono almeno 150 parole' : '- indice ' + ai.index + '/100: ' + BAND_TXT[ai.band].toLowerCase() + ' (quantità di testo ' + QTY_TXT[ai.qty] + ')');
+    if (ai.index !== null && PROVA.umani) L.push('- ' + provaTxt());
     ai.signals.filter(s => s.ok).forEach(s => L.push('- ' + s.name + ': ' + s.value + ' ' + s.unit + ' (contributo ' + Math.round(s.score * 100) + '%)'));
     if (ai.residue.length) L.push('- tracce di copia-incolla: ' + ai.residue.map(x => x.label + ' ' + x.n).join('; '));
     L.push('', "Nota: l'indice non è una probabilità e non prova l'uso di AI; le corrispondenze vanno lette una per una.");

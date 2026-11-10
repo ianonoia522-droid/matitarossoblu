@@ -101,7 +101,13 @@ Oggi l'indice comprende siti come biografieonline.it, sapere.it, studentville.it
 | Paragrafi di lunghezza uniforme | 0,7 | sopra 0,55 | sotto 0,20 |
 | Elenchi di tre termini, ogni 1000 parole | 0,4 | sotto 3 | da 15 |
 
-Le fasce sono tre: da 0 a 34 pochi segnali, da 35 a 59 segnali misti, da 60 a 100 molti segnali. Sotto le 150 parole l'indice non viene calcolato.
+Le fasce sono tre: da 0 a 34 pochi segnali, da 35 a 59 segnali misti, da 60 a 100 molti segnali. La media pesata viene riscalata con una funzione crescente, che non cambia l'ordine dei testi, perché i confini delle fasce cadano dove nelle prove li supera solo il 5% (segnali misti) e l'1% (molti segnali) dei testi scritti da persone. Sotto le 150 parole l'indice non viene calcolato.
+
+**Valutazione.** Il workflow *Valutazione del rilevatore di testi generati* misura l'indice su testi scritti da persone prima di ChatGPT e su temi generati, e pubblica il rapporto nel ramo [`rapporti-ai`](https://github.com/ianonoia522-droid/matitarossoblu/blob/rapporti-ai/valutazione-ai.md). I testi umani sono temi e componimenti, pagine di siti di studio e un campione di pagine web italiane raccolte nel 2019-2020 (dal corpus mC4), e voci di Wikipedia nella versione di fine ottobre 2022: di questi si salvano solo i segnali e l'indirizzo, non il testo. I temi generati rispondono a 30 tracce scolastiche, chiesti in tre modi (richiesta semplice, «scrivi come uno studente», «non deve sembrare scritto da un'AI») a quattro modelli aperti (Qwen 2.5 da 3 e 7 miliardi di parametri, Llama 3.2 3B, Gemma 3 4B); sono valutati come li incollerebbe uno studente, senza titoli e grassetti. Gli strumenti sono in `tools/valuta`.
+
+‹RISULTATI›
+
+Limiti della valutazione: i modelli aperti piccoli non sono quelli che usano di solito gli studenti; i temi umani vengono dal web e non da compiti in classe; non ci sono temi generati e poi rielaborati a mano, che sfuggono più facilmente. Una regressione logistica addestrata sugli stessi dati ha separato peggio dei pesi attuali i temi di un modello escluso dall'addestramento (con Gemma 0,76 contro 0,93): per questo i pesi restano quelli ragionati e la taratura riguarda solo le fasce.
 
 ## Contribuire
 
