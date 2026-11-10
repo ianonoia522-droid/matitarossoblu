@@ -157,8 +157,9 @@ function extract(html) {
 // Legge da DATI/elenchi/elenco-*.jsonl le pagine non ancora fatte (in DATI/parti/<sito>/*.jsonl ci sono quelle lette,
 // in *-saltati.txt quelle da non riprovare), alternando i siti, al ritmo di --ritmo richieste al secondo da una sola
 // macchina e fino a --fine (millisecondi epoch) o per --minuti minuti. Se Common Crawl risponde 403, 429 o 503
-// (limite di frequenza del suo firewall) tutta la lettura si ferma 5 minuti e la pagina torna in coda; dopo 4 pause
-// di fila senza progressi la corsa finisce e salva quanto letto. Per ogni pagina si salvano solo impronte, indirizzo,
+// (Common Crawl sovraccarico o limite di frequenza) tutta la lettura si ferma 1 minuto (2, 3... fino a 10 se i rifiuti
+// continuano), il ritmo si dimezza e la pagina torna in coda; dopo --fermo-max minuti (30) senza pagine lette la corsa
+// finisce e salva quanto letto. Per ogni pagina si salvano solo impronte, indirizzo,
 // titolo, numero di parole e un hash del testo (per riconoscere i doppioni nelle corse successive).
 async function scarica() {
   const dati = args.dati, tag = String(args.tag || Date.now()), conc = +(args.concorrenza || 2);
@@ -168,7 +169,11 @@ async function scarica() {
   let ultimoCambio = Date.now();
   const passoMs = +(args.passo || 5 * 60000);   // intervallo senza rifiuti prima di accelerare (si cambia solo nei test)
   const fine = args.fine ? +args.fine : Date.now() + (+(args.minuti || 300)) * 60000;
-  const pausaMs = +(args.pausa || 5 * 60000);   // pausa dopo un rifiuto per frequenza (si cambia solo nei test)
+  // pausa dopo un rifiuto: nella prima corsa vera 15 pause da 5 minuti tenevano ferma la lettura per il 29% del tempo,
+  // mentre i rifiuti (503) arrivavano a ritmi molto diversi, da 1,3 a 5,4 richieste al secondo: dipendono dal carico
+  // di Common Crawl più che dal nostro ritmo, quindi basta una pausa breve che si allunga se i rifiuti continuano
+  const pausaMs = +(args.pausa || 60000);
+  const fermoMaxMs = +(args['fermo-max'] || 30) * 60000;
   const elenchi = fs.readdirSync(path.join(dati, 'elenchi')).filter(f => /^elenco-.+\.jsonl$/.test(f));
   const h = u => parseInt(crypto.createHash('md5').update(u).digest('hex').slice(0, 8), 16);
   const seenText = new Set(), code = [];
@@ -212,7 +217,7 @@ async function scarica() {
     return o;
   };
   const cache = new Map();
-  let next = Date.now(), pausaFino = 0, pause = 0, ok = 0, saltate = 0, short = 0, dup = 0, limiti = 0, bytes = 0, stop = false, lastOk = 0;
+  let next = Date.now(), pausaFino = 0, pause = 0, ok = 0, saltate = 0, short = 0, dup = 0, limiti = 0, bytes = 0, stop = false, lastOk = 0, ultimaLetta = Date.now();
   const t0 = Date.now();
   async function turno() {
     for (;;) {
@@ -236,10 +241,11 @@ async function scarica() {
       limiti++; queue.unshift(item);
       if (Date.now() >= pausaFino) {
         pause = ok > lastOk ? 1 : pause + 1; lastOk = ok;
-        if (pause > 4) { stop = true; log('limite di Common Crawl: troppe pause senza progressi, mi fermo'); return; }
-        pausaFino = Date.now() + pausaMs * pause;
+        if (Date.now() - ultimaLetta > fermoMaxMs) { stop = true; log('limite di Common Crawl: nessuna pagina letta da', Math.round((Date.now() - ultimaLetta) / 60000), 'minuti, mi fermo'); return; }
+        const p = Math.min(pausaMs * pause, 10 * 60000);
+        pausaFino = Date.now() + p;
         ritmo = Math.max(ritmoMin, ritmo / 2); ultimoCambio = Date.now();
-        log('limite di Common Crawl (' + res.status + '): pausa di', Math.round(pausaMs * pause / 1000), 'secondi, poi ritmo', ritmo, 'al secondo');
+        log('limite di Common Crawl (' + res.status + '): pausa di', Math.round(p / 1000), 'secondi, poi ritmo', ritmo, 'al secondo');
       }
       return;
     }
@@ -271,7 +277,7 @@ async function scarica() {
       for (const L of [40, 80]) camp['f' + L] = X.fingerprints(toks.slice(start, start + L), { cache }).map(f => [f.a, f.b, f.pos]);
       fs.writeSync(o.camp, JSON.stringify(camp) + '\n');
     }
-    o.n++; ok++;
+    o.n++; ok++; ultimaLetta = Date.now();
   }
   let done = 0;
   async function worker() {
@@ -317,21 +323,26 @@ async function unisci() {
   // verifica sull'indice appena scritto, con lo stesso codice di ricerca del browser
   const idx = X.createIndex('indice/', { fetch: fileFetch(out) });
   const ver = { campioni: camp.length };
+  // trovati: estratti ritrovati nella loro pagina (almeno 2 impronte vicine); attesi: estratti che l'indice può
+  // ritrovare, cioè non fatti solo di parti fisse del sito scartate per frequenza. Se trovati < attesi c'è un errore.
   for (const L of [40, 80]) {
-    let found = 0, any = 0;
+    let found = 0, any = 0, expected = 0;
     for (const c of camp) {
       const { hits } = await idx.lookup(c['f' + L].map(([a, b, pos]) => ({ a, b, pos })));
       let okc = false, some = false;
+      const inIdx = new Set();
       for (const [id, pos] of hits) {
+        for (const p of pos) inIdx.add(p);
         if (docs[id].url !== c.url) continue;
         some = true;
         if (X.passages(pos, m.k, m.w).some(p => p.n >= 2)) okc = true;
       }
       if (okc) found++;
       if (some) any++;
+      if (X.passages(Array.from(inIdx), m.k, m.w).some(p => p.n >= 2)) expected++;
     }
-    ver['trovati' + L] = found; ver['impronta' + L] = any;
-    log('verifica', L, 'parole:', found + '/' + camp.length, 'trovati (almeno 2 impronte vicine),', any + '/' + camp.length, 'con almeno un\'impronta');
+    ver['trovati' + L] = found; ver['impronta' + L] = any; ver['attesi' + L] = expected;
+    log('verifica', L, 'parole:', found + '/' + camp.length, 'trovati (almeno 2 impronte vicine),', any + '/' + camp.length, 'con almeno un\'impronta,', expected + '/' + camp.length, 'ritrovabili (non solo parti fisse)');
   }
   const metaPath = path.join(out, 'meta.json'), meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
   meta.verifica = ver;

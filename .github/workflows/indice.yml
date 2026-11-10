@@ -2,7 +2,7 @@ name: Costruzione dell'indice di impronte
 
 # Riprendibile, una macchina alla volta. Ogni corsa legge pagine da Common Crawl al ritmo che il suo firewall consente
 # (riparte dal ritmo finale della corsa precedente, sale fino a 6 richieste al secondo finché non arrivano rifiuti,
-# si dimezza e fa una pausa quando arrivano), salva le impronte nel ramo "indice-dati" e, se la verifica regge,
+# si dimezza e fa una breve pausa quando arrivano), salva le impronte nel ramo "indice-dati" e, se la verifica regge,
 # riscrive l'indice completo nel ramo "indice-build", da cui lo prende il flusso "Pubblicazione del sito".
 # Se restano pagine, alla fine avvia la corsa successiva: le corse si susseguono senza mai sovrapporsi.
 on:
@@ -112,17 +112,18 @@ jobs:
           read -r ARCH DATA DAL < <(python3 -c "import json; c=json.load(open('tools/indice/siti.json')); a=c['archivi']; print(a[-1]+'..'+a[0], c['data'], c.get('dal', c['data']))")
           node tools/indice/costruisci.js unisci --dati dati --uscita uscita/indice --archivio "$ARCH" --data "$DATA" --dal "$DAL"
           du -sh uscita/indice; ls uscita/indice/fp | wc -l; cat uscita/indice/meta.json
-      # l'indice si pubblica solo se la verifica sugli estratti di 80 parole ne ritrova almeno il 90%
+      # l'indice si pubblica solo se ritrova almeno il 98% degli estratti di 80 parole ritrovabili (quelli non fatti
+      # solo di parti fisse dei siti) e se questi sono almeno il 70% degli estratti: altrimenti c'è un errore
       - name: Pubblica l'indice nel ramo "indice-build"
         if: steps.unione.outcome == 'success'
         run: |
           python3 - <<'PY'
           import json, sys
           v = json.load(open('uscita/indice/meta.json')).get('verifica', {})
-          c, t = v.get('campioni', 0), v.get('trovati80', 0)
+          c, t, a = v.get('campioni', 0), v.get('trovati80', 0), v.get('attesi80', 0)
           print('verifica:', v)
-          if c >= 20 and t < 0.9 * c:
-              print('::error::Verifica non superata: %d estratti di 80 parole ritrovati su %d. Indice non pubblicato.' % (t, c))
+          if c >= 20 and (a < 0.7 * c or t < 0.98 * a):
+              print('::error::Verifica non superata: estratti di 80 parole ritrovati %d, ritrovabili %d, su %d. Indice non pubblicato.' % (t, a, c))
               sys.exit(1)
           PY
           cd uscita

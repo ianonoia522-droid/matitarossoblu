@@ -33,7 +33,9 @@ function scegliBits(n, target) { let b = 2; while (b < 16 && (n * 7) / (1 << b) 
 // opts: { k, w, dfMax, docShard, bits, archivio, archivioData, archivioDal, siti, versione }
 function scriviIndice(out, documenti, R, opts) {
   opts = opts || {};
-  const dfMax = opts.dfMax || 8, docShard = opts.docShard || 1000;
+  // dfMax: sulle prime 27.000 pagine vere, con 8 si perdevano anche testi ripetuti in poche decine di pagine dello
+  // stesso sito (schede e serie di pagine): con 64 l'indice cresce del 2% e si scartano solo le parti fisse dei siti
+  const dfMax = opts.dfMax || 64, docShard = opts.docShard || 1000;
   const n = R.n, bits = opts.bits || scegliBits(n), nf = 1 << bits;
   if (documenti.length > 0xffffff) throw new Error('troppi documenti per 24 bit: ' + documenti.length);
   // ordinamento per file (conteggio) e poi per chiave dentro il file
@@ -54,7 +56,7 @@ function scriviIndice(out, documenti, R, opts) {
       let j = i; const kk = key[slice[i]];
       while (j < slice.length && key[slice[j]] === kk) j++;
       const docs = new Set(); for (let t = i; t < j; t++) docs.add(R.D[slice[t]]);
-      // impronte presenti in troppe pagine: menu, piè di pagina, formule ricorrenti
+      // impronte presenti in troppe pagine: menu, piè di pagina, testi fissi del sito, formule ricorrenti
       if (docs.size > dfMax) { dropped += j - i; droppedKeys++; }
       else for (const d of Array.from(docs).sort((x, y) => x - y)) keep.push([kk, d]);
       i = j;
