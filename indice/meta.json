@@ -1,0 +1,79 @@
+{
+ "formato": 2,
+ "versione": "20261111T0924",
+ "k": 5,
+ "w": 24,
+ "bits": 14,
+ "docShard": 1000,
+ "documenti": 245468,
+ "voci": 12705480,
+ "dfMax": 64,
+ "scartate": 1074910,
+ "archivio": "CC-MAIN-2023-06..CC-MAIN-2026-43",
+ "archivioData": "2026-10",
+ "archivioDal": "2023-01",
+ "costruito": "2026-11-11T09:24:20.105Z",
+ "siti": [
+  {
+   "dominio": "sapere.it",
+   "documenti": 59782
+  },
+  {
+   "dominio": "treccani.it",
+   "documenti": 40795
+  },
+  {
+   "dominio": "biografieonline.it",
+   "documenti": 36825
+  },
+  {
+   "dominio": "studentville.it",
+   "documenti": 31064
+  },
+  {
+   "dominio": "atuttascuola.it",
+   "documenti": 24071
+  },
+  {
+   "dominio": "tesionline.it",
+   "documenti": 15025
+  },
+  {
+   "dominio": "geopop.it",
+   "documenti": 7636
+  },
+  {
+   "dominio": "weschool.com",
+   "documenti": 7013
+  },
+  {
+   "dominio": "studiarapido.it",
+   "documenti": 6667
+  },
+  {
+   "dominio": "homolaicus.com",
+   "documenti": 5925
+  },
+  {
+   "dominio": "edscuola.it",
+   "documenti": 5438
+  },
+  {
+   "dominio": "chimica-online.it",
+   "documenti": 4498
+  },
+  {
+   "dominio": "storiaxxisecolo.it",
+   "documenti": 729
+  }
+ ],
+ "verifica": {
+  "campioni": 539,
+  "trovati40": 300,
+  "impronta40": 489,
+  "attesi40": 300,
+  "trovati80": 480,
+  "impronta80": 505,
+  "attesi80": 480
+ }
+}
