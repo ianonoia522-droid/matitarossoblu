@@ -416,7 +416,9 @@ Diversi studi condotti in città mediterranee hanno mostrato che la sostituzione
     if (m && !err) {
       const siti = (m.siti || []).map(s => s.dominio);
       parts.push('Indice: ' + fmtInt(m.documenti) + ' pagine di ' + siti.slice(0, 4).join(', ') + (siti.length > 4 ? ' e altri ' + (siti.length - 4) + ' siti' : '') + ', dall\'' + archivioLabel(m) + '.');
-      if (!added.length) parts.push('Trova i passaggi identici di almeno ' + (m.k + m.w - 1) + ' parole presenti nell\'indice, che contiene solo una parte di quei siti: un esito vuoto non dimostra che il testo sia originale.');
+      // quanto ritrova davvero: la verifica fatta a ogni costruzione dell'indice su brani presi a caso dalle sue pagine
+      const v = m.verifica, pc = (a, b) => { const n = Math.round(100 * a / b); return (n === 1 || n === 11 || /^8/.test(String(n)) ? 'l\'' : n === 0 ? 'lo ' : 'il ') + n + '%'; };
+      if (!added.length) parts.push((v && v.campioni ? 'Nella verifica dell\'indice ritrova ' + pc(v.trovati80, v.campioni) + ' dei brani di 80 parole copiati dalle sue pagine e ' + pc(v.trovati40, v.campioni) + ' di quelli di 40. ' : '') + 'L\'indice contiene solo una parte di quei siti: un esito vuoto non dimostra che il testo sia originale.');
     }
     setMsg(el.idxMsg, parts.join(' '), !!err && !aborted);
     if (added.length) { selectTab('src'); await runAnalysis(); }
